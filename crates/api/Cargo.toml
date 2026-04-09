@@ -1,5 +1,5 @@
 [package]
-name = "streamhub-api"
+name = "api"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -22,7 +22,6 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
 cfgloader_rs = { workspace = true }
-streamhub-common = { workspace = true }
-streamhub-entity = { workspace = true }
-streamhub-migration = { workspace = true }
-streamhub-hook = { workspace = true }
+common = { workspace = true }
+entity = { workspace = true }
+hook = { workspace = true }

@@ -4,7 +4,7 @@ use cfgloader_rs::*;
 pub struct AppConfig {
     #[env(
         "DATABASE_URL",
-        default = "postgres://streamhub:streamhub@localhost:5432/streamhub"
+        default = "postgres://streamhub:streamhub@localhost:5433/streamhub"
     )]
     pub database_url: String,
 

@@ -25,6 +25,8 @@ sea-orm = { version = "2.0.0-rc.37", features = [
     "macros",
     "with-chrono",
     "with-uuid",
+    "schema-sync",
+    "entity-registry"
 ] }
 sea-orm-migration = { version = "2.0.0-rc.37", features = [
     "sqlx-postgres",
@@ -53,11 +55,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 cfgloader_rs = "1.0"
 
 # Internal crates
-streamhub-common = { path = "crates/common" }
-streamhub-entity = { path = "crates/entity" }
-streamhub-migration = { path = "crates/migration" }
-streamhub-hook = { path = "crates/hook" }
-streamhub-auth = { path = "crates/auth" }
-streamhub-stream = { path = "crates/stream" }
-streamhub-storage = { path = "crates/storage" }
-streamhub-transcoder = { path = "crates/transcoder" }
+common = { path = "crates/common" }
+entity = { path = "crates/entity" }
+migration = { path = "crates/migration" }
+hook = { path = "crates/hook" }
+auth = { path = "crates/auth" }
+stream = { path = "crates/stream" }
+storage = { path = "crates/storage" }
+transcoder = { path = "crates/transcoder" }
