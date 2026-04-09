@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/api",
+    "crates/auth",
+    "crates/common",
+    "crates/entity",
+    "crates/hook",
+    "crates/migration",
+    "crates/storage",
+    "crates/stream",
+    "crates/transcoder",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+
+[workspace.dependencies]
+# SeaORM
+sea-orm = { version = "2.0.0-rc.37", features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
+    "macros",
+    "with-chrono",
+    "with-uuid",
+] }
+sea-orm-migration = { version = "2.0.0-rc.37", features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
+] }
+
+# Web framework
+axum = { version = "0.8", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+config = "0.15"
+
+# Internal crates
+streamhub-common = { path = "crates/common" }
+streamhub-entity = { path = "crates/entity" }
+streamhub-migration = { path = "crates/migration" }
+streamhub-hook = { path = "crates/hook" }
+streamhub-auth = { path = "crates/auth" }
+streamhub-stream = { path = "crates/stream" }
+streamhub-storage = { path = "crates/storage" }
+streamhub-transcoder = { path = "crates/transcoder" }

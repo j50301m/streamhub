@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamHub - Broadcaster</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
+        h1 { margin-bottom: 20px; color: #e94560; }
+        .container { max-width: 900px; margin: 0 auto; }
+        .controls { margin-bottom: 20px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        input { padding: 8px 12px; border: 1px solid #444; border-radius: 4px; background: #16213e; color: #eee; font-size: 14px; }
+        input#api-url { width: 300px; }
+        button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; }
+        button.primary { background: #e94560; color: #fff; }
+        button.primary:hover { background: #c73e54; }
+        button.danger { background: #666; color: #fff; }
+        button.danger:hover { background: #888; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        video { width: 100%; max-width: 800px; background: #000; border-radius: 8px; margin-bottom: 10px; }
+        .status { padding: 10px; background: #16213e; border-radius: 4px; margin-top: 10px; font-family: monospace; font-size: 13px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+        label { font-size: 14px; color: #aaa; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>StreamHub Broadcaster</h1>
+
+        <div class="controls">
+            <label>API URL:</label>
+            <input type="text" id="api-url" value="http://localhost:8080" />
+        </div>
+
+        <div class="controls">
+            <label>Title:</label>
+            <input type="text" id="stream-title" placeholder="My Stream" />
+            <button class="primary" id="btn-create" onclick="createStream()">Create Stream</button>
+        </div>
+
+        <div class="controls" id="stream-info" style="display:none;">
+            <label>Stream Key:</label>
+            <input type="text" id="stream-key" readonly />
+            <button class="primary" id="btn-start" onclick="startStreaming()" disabled>Start Streaming</button>
+            <button class="danger" id="btn-stop" onclick="stopStreaming()" disabled>Stop</button>
+        </div>
+
+        <video id="preview" autoplay muted playsinline></video>
+
+        <div class="status" id="log">Ready.</div>
+    </div>
+
+    <script>
+        let pc = null;
+        let localStream = null;
+        let currentStreamKey = null;
+        let mediamtxBase = 'http://localhost:8889';
+
+        function log(msg) {
+            const el = document.getElementById('log');
+            const ts = new Date().toLocaleTimeString();
+            el.textContent += '\n[' + ts + '] ' + msg;
+            el.scrollTop = el.scrollHeight;
+        }
+
+        async function createStream() {
+            const apiUrl = document.getElementById('api-url').value;
+            const title = document.getElementById('stream-title').value || null;
+
+            try {
+                const res = await fetch(apiUrl + '/v1/streams', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: title })
+                });
+                const json = await res.json();
+
+                if (!res.ok) {
+                    log('Error creating stream: ' + JSON.stringify(json.error));
+                    return;
+                }
+
+                const stream = json.data;
+                currentStreamKey = stream.stream_key;
+                document.getElementById('stream-key').value = currentStreamKey;
+                document.getElementById('stream-info').style.display = 'flex';
+                document.getElementById('btn-start').disabled = false;
+                document.getElementById('btn-create').disabled = true;
+
+                log('Stream created: ' + currentStreamKey);
+                log('WHIP URL: ' + stream.urls.whip);
+
+                // Start camera preview
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('preview').srcObject = localStream;
+                log('Camera ready.');
+            } catch (e) {
+                log('Error: ' + e.message);
+            }
+        }
+
+        async function startStreaming() {
+            if (!currentStreamKey || !localStream) return;
+
+            try {
+                pc = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                // Wait for ICE gathering
+                await new Promise((resolve) => {
+                    if (pc.iceGatheringState === 'complete') { resolve(); return; }
+                    pc.addEventListener('icegatheringstatechange', () => {
+                        if (pc.iceGatheringState === 'complete') resolve();
+                    });
+                });
+
+                log('Sending WHIP offer...');
+                const whipUrl = mediamtxBase + '/' + currentStreamKey + '/whip';
+                const res = await fetch(whipUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/sdp' },
+                    body: pc.localDescription.sdp
+                });
+
+                if (!res.ok) {
+                    log('WHIP error: ' + res.status + ' ' + await res.text());
+                    return;
+                }
+
+                const answerSdp = await res.text();
+                await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+                document.getElementById('btn-start').disabled = true;
+                document.getElementById('btn-stop').disabled = false;
+                log('Streaming live!');
+            } catch (e) {
+                log('Streaming error: ' + e.message);
+            }
+        }
+
+        function stopStreaming() {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            if (localStream) {
+                localStream.getTracks().forEach(t => t.stop());
+                localStream = null;
+            }
+            document.getElementById('preview').srcObject = null;
+            document.getElementById('btn-start').disabled = true;
+            document.getElementById('btn-stop').disabled = true;
+            log('Streaming stopped.');
+        }
+    </script>
+</body>
+</html>
