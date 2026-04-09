@@ -39,6 +39,7 @@ async fn main() -> Result<()> {
         db,
         mediamtx_url: config.mediamtx_url.clone(),
         jwt_secret: config.jwt_secret.clone(),
+        recordings_path: config.recordings_path.clone(),
     };
 
     let app = Router::new()

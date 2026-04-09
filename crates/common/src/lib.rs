@@ -13,6 +13,8 @@ pub struct AppState {
     pub db: DatabaseConnection,
     pub mediamtx_url: String,
     pub jwt_secret: String,
+    /// Local filesystem path where recordings are stored (for path mapping).
+    pub recordings_path: String,
 }
 
 /// Initialize database connection pool with statement_timeout.

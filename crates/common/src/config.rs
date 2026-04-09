@@ -19,4 +19,9 @@ pub struct AppConfig {
 
     #[env("JWT_SECRET", default = "dev-secret-change-in-production")]
     pub jwt_secret: String,
+
+    /// Local path where MediaMTX recordings are stored.
+    /// In Docker, MediaMTX writes to /recordings; on host, this maps to ./recordings.
+    #[env("RECORDINGS_PATH", default = "./recordings")]
+    pub recordings_path: String,
 }
