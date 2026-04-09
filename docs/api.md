@@ -566,14 +566,14 @@ POST /internal/hooks/recording
 ```json
 {
   "stream_key": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-  "file_path": "/recordings/7c9e6679.../2026-01-01_00-00-00.fmp4"
+  "segment_path": "/recordings/7c9e6679.../2026-01-01_00-00-00.fmp4"
 }
 ```
 
 Rust hook handler 收到後：
-1. 上傳 `file_path` 到 `gs://streamhub-recordings-{env}/`
+1. 讀取 `segment_path` 的檔案大小
 2. 在 DB 建立 `recordings` 記錄
-3. 刪除本地暫存檔
+3. （後續 spec）上傳到 GCS 並刪除本地暫存檔
 
 **Response `200 OK`**
 

@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
+    #[sea_orm(
+        belongs_to = "super::stream::Entity",
+        from = "Column::StreamId",
+        to = "super::stream::Column::Id"
+    )]
     pub stream_id: Uuid,
     pub file_path: String,
     #[sea_orm(nullable)]
