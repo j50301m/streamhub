@@ -12,6 +12,7 @@ serde_json = { workspace = true }
 common = { workspace = true }
 entity = { workspace = true }
 auth = { workspace = true }
+transcoder = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
