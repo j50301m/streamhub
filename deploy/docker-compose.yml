@@ -17,7 +17,9 @@ services:
       retries: 5
 
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.mediamtx
     container_name: streamhub-mediamtx
     ports:
       - "8554:8554"       # RTSP
