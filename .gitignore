@@ -26,6 +26,9 @@ Thumbs.db
 # Recordings (MediaMTX local recordings)
 deploy/recordings/*
 
+# SSL certificates (self-signed, local dev)
+deploy/ssl/
+
 # Claude setting
 .claude/*
 CLAUDE.md

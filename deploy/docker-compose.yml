@@ -64,6 +64,9 @@ services:
     container_name: streamhub-web
     ports:
       - "3000:3000"
+      - "3443:3443"
+    volumes:
+      - ./ssl:/etc/nginx/ssl:ro
     depends_on:
       - api
       - mediamtx
