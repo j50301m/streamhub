@@ -56,5 +56,13 @@ paths:
       -H "Content-Type: application/json"
       -d '{"stream_key":"$MTX_PATH","action":"unpublish"}'
 
-    # Recording disabled for MVP
-    record: no
+    # Recording
+    record: yes
+    recordFormat: fmp4
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+
+    # Webhook when a recording segment is complete
+    runOnRecordSegmentComplete: >
+      curl -s -X POST http://host.docker.internal:8080/internal/hooks/recording
+      -H "Content-Type: application/json"
+      -d '{"stream_key":"$MTX_PATH","segment_path":"$MTX_SEGMENT_PATH"}'

@@ -30,6 +30,7 @@ services:
       - "9997:9997"       # API
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
+      - ./recordings:/recordings
     depends_on:
       postgres:
         condition: service_healthy

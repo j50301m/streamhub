@@ -4,8 +4,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use common::{AppError, AppState};
-use entity::stream;
 use entity::user::UserRole;
+use entity::{recording, stream};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
@@ -40,6 +40,7 @@ pub struct StreamResponse {
     pub stream_key: String,
     pub title: Option<String>,
     pub status: stream::StreamStatus,
+    pub vod_status: stream::VodStatus,
     pub urls: StreamUrls,
     pub started_at: Option<chrono::DateTime<Utc>>,
     pub ended_at: Option<chrono::DateTime<Utc>>,
@@ -80,6 +81,7 @@ fn build_stream_response(model: stream::Model, mediamtx_base: &str) -> StreamRes
         stream_key: model.stream_key.clone(),
         title: model.title,
         status: model.status,
+        vod_status: model.vod_status,
         urls: StreamUrls {
             whip: format!("{mediamtx_base}/{key}/whip"),
             whep: format!("{mediamtx_base}/{key}/whep"),
@@ -112,6 +114,7 @@ async fn create_stream(
         stream_key: Set(stream_key),
         title: Set(payload.title),
         status: Set(stream::StreamStatus::Pending),
+        vod_status: Set(stream::VodStatus::None),
         started_at: Set(None),
         ended_at: Set(None),
         created_at: Set(Utc::now()),
@@ -316,6 +319,70 @@ async fn create_stream_token(
     ))
 }
 
+#[derive(Debug, Serialize)]
+pub struct RecordingResponse {
+    pub id: Uuid,
+    pub stream_id: Uuid,
+    pub file_path: String,
+    pub duration_secs: Option<i64>,
+    pub file_size_bytes: Option<i64>,
+    pub created_at: chrono::DateTime<Utc>,
+}
+
+fn build_recording_response(model: recording::Model) -> RecordingResponse {
+    RecordingResponse {
+        id: model.id,
+        stream_id: model.stream_id,
+        file_path: model.file_path,
+        duration_secs: model.duration_secs,
+        file_size_bytes: model.file_size_bytes,
+        created_at: model.created_at,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListRecordingsQuery {
+    pub page: Option<u64>,
+    pub per_page: Option<u64>,
+}
+
+/// GET /v1/streams/:id/recordings — owner only
+async fn list_recordings(
+    current_user: CurrentUser,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(params): Query<ListRecordingsQuery>,
+) -> Result<Json<PaginatedResponse<RecordingResponse>>, AppError> {
+    let _stream = load_owned_stream(&state, id, current_user.id).await?;
+
+    let page = params.page.unwrap_or(1).max(1);
+    let per_page = params.per_page.unwrap_or(20).min(100);
+
+    let query = recording::Entity::find()
+        .filter(recording::Column::StreamId.eq(id))
+        .order_by_desc(recording::Column::CreatedAt);
+
+    let total = query.clone().count(&state.db).await?;
+    let total_pages = total.div_ceil(per_page);
+
+    let models = query
+        .paginate(&state.db, per_page)
+        .fetch_page(page - 1)
+        .await?;
+
+    let data: Vec<RecordingResponse> = models.into_iter().map(build_recording_response).collect();
+
+    Ok(Json(PaginatedResponse {
+        data,
+        pagination: Pagination {
+            page,
+            per_page,
+            total,
+            total_pages,
+        },
+    }))
+}
+
 pub fn stream_routes() -> Router<AppState> {
     Router::new()
         .route("/v1/streams", post(create_stream).get(list_streams))
@@ -325,4 +392,5 @@ pub fn stream_routes() -> Router<AppState> {
         )
         .route("/v1/streams/{id}/end", post(end_stream))
         .route("/v1/streams/{id}/token", post(create_stream_token))
+        .route("/v1/streams/{id}/recordings", get(list_recordings))
 }
