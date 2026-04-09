@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamHub - Viewer</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
+        h1 { margin-bottom: 20px; color: #0f3460; }
+        .container { max-width: 900px; margin: 0 auto; }
+        .controls { margin-bottom: 20px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        input { padding: 8px 12px; border: 1px solid #444; border-radius: 4px; background: #16213e; color: #eee; font-size: 14px; }
+        button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; }
+        button.primary { background: #0f3460; color: #fff; }
+        button.primary:hover { background: #1a4a7a; }
+        button.secondary { background: #e94560; color: #fff; }
+        button.secondary:hover { background: #c73e54; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        video { width: 100%; max-width: 800px; background: #000; border-radius: 8px; margin-bottom: 10px; }
+        .status { padding: 10px; background: #16213e; border-radius: 4px; margin-top: 10px; font-family: monospace; font-size: 13px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+        label { font-size: 14px; color: #aaa; }
+        .mode-info { font-size: 12px; color: #888; margin-top: 5px; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>StreamHub Viewer</h1>
+
+        <div class="controls">
+            <label>API URL:</label>
+            <input type="text" id="api-url" value="http://localhost:8080" />
+        </div>
+
+        <div class="controls">
+            <label>Stream Key:</label>
+            <input type="text" id="stream-key" placeholder="paste stream key here" />
+            <button class="primary" id="btn-whep" onclick="watchWHEP()">Watch (WHEP)</button>
+            <button class="secondary" id="btn-hls" onclick="watchHLS()">Watch (HLS)</button>
+            <button class="primary" id="btn-stop" onclick="stopWatching()" disabled>Stop</button>
+        </div>
+
+        <video id="player" autoplay playsinline controls></video>
+        <div class="mode-info" id="mode-info"></div>
+
+        <div class="status" id="log">Ready. Enter a stream key and choose WHEP (low latency) or HLS (compatibility).</div>
+    </div>
+
+    <script>
+        let pc = null;
+        let hls = null;
+        let mediamtxBase = 'http://localhost:8889';
+
+        function log(msg) {
+            const el = document.getElementById('log');
+            const ts = new Date().toLocaleTimeString();
+            el.textContent += '\n[' + ts + '] ' + msg;
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function stopWatching() {
+            if (pc) { pc.close(); pc = null; }
+            if (hls) { hls.destroy(); hls = null; }
+            const video = document.getElementById('player');
+            video.srcObject = null;
+            video.src = '';
+            document.getElementById('btn-stop').disabled = true;
+            document.getElementById('mode-info').textContent = '';
+            log('Stopped watching.');
+        }
+
+        async function checkStreamStatus() {
+            const apiUrl = document.getElementById('api-url').value;
+            const streamKey = document.getElementById('stream-key').value.trim();
+            if (!streamKey) { log('Please enter a stream key.'); return null; }
+
+            try {
+                const res = await fetch(apiUrl + '/v1/streams/' + streamKey);
+                if (!res.ok) {
+                    log('Stream not found or error: ' + res.status);
+                    return null;
+                }
+                const json = await res.json();
+                return json.data;
+            } catch (e) {
+                log('Error checking stream: ' + e.message);
+                return null;
+            }
+        }
+
+        async function watchWHEP() {
+            stopWatching();
+            const streamKey = document.getElementById('stream-key').value.trim();
+            if (!streamKey) { log('Please enter a stream key.'); return; }
+
+            try {
+                pc = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                pc.addTransceiver('video', { direction: 'recvonly' });
+                pc.addTransceiver('audio', { direction: 'recvonly' });
+
+                pc.ontrack = (event) => {
+                    log('Received track: ' + event.track.kind);
+                    document.getElementById('player').srcObject = event.streams[0];
+                };
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                // Wait for ICE gathering
+                await new Promise((resolve) => {
+                    if (pc.iceGatheringState === 'complete') { resolve(); return; }
+                    pc.addEventListener('icegatheringstatechange', () => {
+                        if (pc.iceGatheringState === 'complete') resolve();
+                    });
+                });
+
+                log('Sending WHEP offer...');
+                const whepUrl = mediamtxBase + '/' + streamKey + '/whep';
+                const res = await fetch(whepUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/sdp' },
+                    body: pc.localDescription.sdp
+                });
+
+                if (!res.ok) {
+                    log('WHEP error: ' + res.status + ' ' + await res.text());
+                    return;
+                }
+
+                const answerSdp = await res.text();
+                await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+                document.getElementById('btn-stop').disabled = false;
+                document.getElementById('mode-info').textContent = 'Mode: WHEP (WebRTC, low latency)';
+                log('Connected via WHEP.');
+            } catch (e) {
+                log('WHEP error: ' + e.message);
+            }
+        }
+
+        async function watchHLS() {
+            stopWatching();
+            const streamKey = document.getElementById('stream-key').value.trim();
+            if (!streamKey) { log('Please enter a stream key.'); return; }
+
+            const hlsUrl = mediamtxBase + '/' + streamKey + '/index.m3u8';
+            const video = document.getElementById('player');
+
+            if (Hls.isSupported()) {
+                hls = new Hls({
+                    lowLatencyMode: true,
+                    liveSyncDurationCount: 3,
+                });
+                hls.loadSource(hlsUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    video.play();
+                    log('HLS playback started.');
+                });
+                hls.on(Hls.Events.ERROR, (event, data) => {
+                    log('HLS error: ' + data.type + ' - ' + data.details);
+                });
+                document.getElementById('btn-stop').disabled = false;
+                document.getElementById('mode-info').textContent = 'Mode: HLS (LL-HLS, compatible)';
+                log('Connecting via HLS: ' + hlsUrl);
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Safari native HLS
+                video.src = hlsUrl;
+                video.addEventListener('loadedmetadata', () => { video.play(); });
+                document.getElementById('btn-stop').disabled = false;
+                document.getElementById('mode-info').textContent = 'Mode: Native HLS (Safari)';
+                log('Using native HLS: ' + hlsUrl);
+            } else {
+                log('HLS not supported in this browser.');
+            }
+        }
+    </script>
+</body>
+</html>

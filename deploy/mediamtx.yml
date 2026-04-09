@@ -1,0 +1,56 @@
+# MediaMTX configuration for streamhub
+# Docs: https://github.com/bluenviron/mediamtx
+
+###############################################
+# Global settings
+
+# Log level (debug, info, warn, error)
+logLevel: info
+
+###############################################
+# API settings
+
+api: yes
+apiAddress: :9997
+
+###############################################
+# WebRTC settings
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
+
+###############################################
+# HLS settings
+
+hls: yes
+hlsAddress: :8888
+hlsAllowOrigin: "*"
+
+###############################################
+# Path settings
+
+paths:
+  # Only accept UUID v4 format stream keys
+  "~^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$":
+    # Webhook on publish (stream starts)
+    runOnPublish: >
+      curl -s -X POST http://localhost:8080/internal/hooks/publish
+      -H "Content-Type: application/json"
+      -d '{"stream_key":"$MTX_PATH","action":"publish"}'
+
+    # Webhook on unpublish (stream stops)
+    runOnUnpublish: >
+      curl -s -X POST http://localhost:8080/internal/hooks/publish
+      -H "Content-Type: application/json"
+      -d '{"stream_key":"$MTX_PATH","action":"unpublish"}'
+
+    # Recording disabled for MVP
+    record: no
+
+    # CORS
+    hlsAllowOrigin: "*"
+    webrtcAllowOrigin: "*"
