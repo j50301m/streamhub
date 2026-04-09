@@ -17,7 +17,7 @@ apiAllowOrigins: ['*']
 # Authentication settings
 
 authMethod: http
-authHTTPAddress: http://host.docker.internal:8080/internal/auth
+authHTTPAddress: http://api:8080/internal/auth
 
 ###############################################
 # WebRTC settings
@@ -46,13 +46,13 @@ paths:
   "~^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$":
     # Webhook when stream becomes ready (published)
     runOnReady: >
-      curl -s -X POST http://host.docker.internal:8080/internal/hooks/publish
+      curl -s -X POST http://api:8080/internal/hooks/publish
       -H "Content-Type: application/json"
       -d '{"stream_key":"$MTX_PATH","action":"publish"}'
 
     # Webhook when stream becomes unavailable (unpublished)
     runOnNotReady: >
-      curl -s -X POST http://host.docker.internal:8080/internal/hooks/publish
+      curl -s -X POST http://api:8080/internal/hooks/publish
       -H "Content-Type: application/json"
       -d '{"stream_key":"$MTX_PATH","action":"unpublish"}'
 
@@ -63,6 +63,6 @@ paths:
 
     # Webhook when a recording segment is complete
     runOnRecordSegmentComplete: >
-      curl -s -X POST http://host.docker.internal:8080/internal/hooks/recording
+      curl -s -X POST http://api:8080/internal/hooks/recording
       -H "Content-Type: application/json"
       -d '{"stream_key":"$MTX_PATH","segment_path":"$MTX_SEGMENT_PATH"}'

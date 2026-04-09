@@ -16,6 +16,26 @@ services:
       timeout: 5s
       retries: 5
 
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    container_name: streamhub-api
+    environment:
+      DATABASE_URL: postgres://streamhub:streamhub@postgres:5432/streamhub
+      JWT_SECRET: dev-secret-change-in-production
+      RECORDINGS_PATH: /recordings
+      MEDIAMTX_URL: http://mediamtx:9997
+      HOST: 0.0.0.0
+      PORT: 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./recordings:/recordings
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   mediamtx:
     build:
       context: .
@@ -36,6 +56,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    container_name: streamhub-web
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+      - mediamtx
 
 volumes:
   pgdata:

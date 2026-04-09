@@ -38,7 +38,7 @@
 
         <div class="controls">
             <label>API URL:</label>
-            <input type="text" id="api-url" value="http://localhost:8080" />
+            <input type="text" id="api-url" value="" />
         </div>
 
         <!-- Auth Section -->
@@ -103,7 +103,23 @@
         let pc = null;
         let localStream = null;
         let authMode = 'login';
-        let mediamtxBase = 'http://localhost:8889';
+        let mediamtxBase = '';
+
+        // Detect environment: if served via nginx (port 3000), use proxy paths
+        // Otherwise (direct file open or other port), use direct localhost URLs
+        function detectUrls() {
+            const loc = window.location;
+            if (loc.protocol === 'http:' || loc.protocol === 'https:') {
+                // Served via a web server — use relative proxy paths
+                document.getElementById('api-url').value = loc.origin + '/api';
+                mediamtxBase = loc.origin + '/mediamtx';
+            } else {
+                // Opened as a file or unknown — use direct localhost
+                document.getElementById('api-url').value = 'http://localhost:8080';
+                mediamtxBase = 'http://localhost:8889';
+            }
+        }
+        detectUrls();
 
         function log(msg) {
             const el = document.getElementById('log');
