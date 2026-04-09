@@ -24,7 +24,7 @@ Thumbs.db
 /worktrees/
 
 # Recordings (MediaMTX local recordings)
-/recordings/
+deploy/recordings/*
 
 # Claude setting
 .claude/*
