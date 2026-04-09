@@ -23,6 +23,9 @@ pub enum StreamStatus {
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
+    /// Owner user. Nullable for streams created before auth was added.
+    #[sea_orm(nullable)]
+    pub user_id: Option<Uuid>,
     #[sea_orm(unique)]
     pub stream_key: String,
     #[sea_orm(nullable)]

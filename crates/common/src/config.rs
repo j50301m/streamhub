@@ -16,4 +16,7 @@ pub struct AppConfig {
 
     #[env("MEDIAMTX_URL", default = "http://localhost:9997")]
     pub mediamtx_url: String,
+
+    #[env("JWT_SECRET", default = "dev-secret-change-in-production")]
+    pub jwt_secret: String,
 }
