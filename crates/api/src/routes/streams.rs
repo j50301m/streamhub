@@ -73,6 +73,32 @@ struct Pagination {
     total_pages: u64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct LiveStreamResponse {
+    pub id: Uuid,
+    pub stream_key: String,
+    pub title: Option<String>,
+    pub status: stream::StreamStatus,
+    pub started_at: Option<chrono::DateTime<Utc>>,
+    pub urls: StreamUrls,
+}
+
+fn build_live_stream_response(model: stream::Model, mediamtx_base: &str) -> LiveStreamResponse {
+    let key = &model.stream_key;
+    LiveStreamResponse {
+        id: model.id,
+        stream_key: model.stream_key.clone(),
+        title: model.title,
+        status: model.status,
+        started_at: model.started_at,
+        urls: StreamUrls {
+            whip: format!("{mediamtx_base}/{key}/whip"),
+            whep: format!("{mediamtx_base}/{key}/whep"),
+            hls: format!("{mediamtx_base}/{key}/index.m3u8"),
+        },
+    }
+}
+
 fn build_stream_response(model: stream::Model, mediamtx_base: &str) -> StreamResponse {
     let key = &model.stream_key;
     StreamResponse {
@@ -91,6 +117,24 @@ fn build_stream_response(model: stream::Model, mediamtx_base: &str) -> StreamRes
         ended_at: model.ended_at,
         created_at: model.created_at,
     }
+}
+
+/// GET /v1/streams/live — public, returns all live streams
+async fn list_live_streams(
+    State(state): State<AppState>,
+) -> Result<Json<DataResponse<Vec<LiveStreamResponse>>>, AppError> {
+    let models = stream::Entity::find()
+        .filter(stream::Column::Status.eq(stream::StreamStatus::Live))
+        .order_by_desc(stream::Column::StartedAt)
+        .all(&state.db)
+        .await?;
+
+    let data: Vec<LiveStreamResponse> = models
+        .into_iter()
+        .map(|m| build_live_stream_response(m, &state.mediamtx_url))
+        .collect();
+
+    Ok(Json(DataResponse { data }))
 }
 
 /// POST /v1/streams — requires auth (broadcaster role)
@@ -386,6 +430,7 @@ async fn list_recordings(
 pub fn stream_routes() -> Router<AppState> {
     Router::new()
         .route("/v1/streams", post(create_stream).get(list_streams))
+        .route("/v1/streams/live", get(list_live_streams))
         .route(
             "/v1/streams/{id}",
             get(get_stream).patch(update_stream).delete(delete_stream),

@@ -21,12 +21,28 @@
         .status { padding: 10px; background: #16213e; border-radius: 4px; margin-top: 10px; font-family: monospace; font-size: 13px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
         label { font-size: 14px; color: #aaa; }
         .mode-info { font-size: 12px; color: #888; margin-top: 5px; }
+        .live-section { margin-bottom: 20px; }
+        .live-section h2 { font-size: 18px; color: #e94560; margin-bottom: 10px; }
+        .live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+        .live-card { background: #16213e; border: 1px solid #333; border-radius: 8px; padding: 14px; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+        .live-card:hover { border-color: #e94560; background: #1a2a4e; }
+        .live-card .card-title { font-size: 15px; font-weight: bold; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .live-card .card-key { font-size: 12px; color: #888; font-family: monospace; }
+        .live-card .card-time { font-size: 12px; color: #aaa; margin-top: 6px; }
+        .live-empty { color: #666; font-size: 14px; padding: 16px 0; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
 <body>
     <div class="container">
         <h1>StreamHub Viewer</h1>
+
+        <div class="live-section">
+            <h2>Live Now</h2>
+            <div id="live-grid" class="live-grid">
+                <div class="live-empty">Loading...</div>
+            </div>
+        </div>
 
         <div class="controls">
             <label>API URL:</label>
@@ -52,6 +68,63 @@
         let hls = null;
         let mediamtxBase = 'http://localhost:8889';
         let hlsBase = 'http://localhost:8888';
+        let refreshInterval = null;
+
+        function timeAgo(dateStr) {
+            const now = Date.now();
+            const then = new Date(dateStr).getTime();
+            const secs = Math.floor((now - then) / 1000);
+            if (secs < 60) return secs + 's ago';
+            const mins = Math.floor(secs / 60);
+            if (mins < 60) return mins + ' min ago';
+            const hrs = Math.floor(mins / 60);
+            return hrs + 'h ago';
+        }
+
+        function renderLiveStreams(streams) {
+            const grid = document.getElementById('live-grid');
+            if (!streams || streams.length === 0) {
+                grid.innerHTML = '<div class="live-empty">No live streams right now</div>';
+                return;
+            }
+            grid.innerHTML = streams.map(function(s) {
+                var title = s.title || 'Untitled';
+                var shortKey = s.stream_key.substring(0, 8);
+                var ago = s.started_at ? timeAgo(s.started_at) : '';
+                return '<div class="live-card" onclick="selectStream(\'' + s.stream_key + '\')">' +
+                    '<div class="card-title">' + escapeHtml(title) + '</div>' +
+                    '<div class="card-key">' + shortKey + '</div>' +
+                    '<div class="card-time">' + ago + '</div>' +
+                    '</div>';
+            }).join('');
+        }
+
+        function escapeHtml(str) {
+            var div = document.createElement('div');
+            div.appendChild(document.createTextNode(str));
+            return div.innerHTML;
+        }
+
+        function selectStream(streamKey) {
+            document.getElementById('stream-key').value = streamKey;
+            watchWHEP();
+        }
+
+        async function fetchLiveStreams() {
+            var apiUrl = document.getElementById('api-url').value;
+            try {
+                var res = await fetch(apiUrl + '/v1/streams/live');
+                if (!res.ok) return;
+                var json = await res.json();
+                renderLiveStreams(json.data);
+            } catch (e) {
+                // silently ignore refresh errors
+            }
+        }
+
+        // Initial fetch and auto-refresh every 10 seconds
+        fetchLiveStreams();
+        refreshInterval = setInterval(fetchLiveStreams, 10000);
 
         function log(msg) {
             const el = document.getElementById('log');
