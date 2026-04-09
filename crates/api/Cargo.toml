@@ -25,3 +25,4 @@ cfgloader_rs = { workspace = true }
 common = { workspace = true }
 entity = { workspace = true }
 hook = { workspace = true }
+auth = { workspace = true }

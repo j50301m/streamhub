@@ -12,6 +12,7 @@ use std::time::Duration;
 pub struct AppState {
     pub db: DatabaseConnection,
     pub mediamtx_url: String,
+    pub jwt_secret: String,
 }
 
 /// Initialize database connection pool with statement_timeout.

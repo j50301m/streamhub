@@ -7,6 +7,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
+pub mod middleware;
 mod routes;
 
 #[tokio::main]
@@ -37,10 +38,12 @@ async fn main() -> Result<()> {
     let state = AppState {
         db,
         mediamtx_url: config.mediamtx_url.clone(),
+        jwt_secret: config.jwt_secret.clone(),
     };
 
     let app = Router::new()
         .merge(routes::health_routes())
+        .merge(routes::auth_routes())
         .merge(routes::stream_routes())
         .merge(routes::hook_routes())
         .layer(CorsLayer::permissive())

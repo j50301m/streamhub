@@ -10,8 +10,17 @@ pub enum AppError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
     #[error("Conflict: {0}")]
     Conflict(String),
+
+    #[error("Validation error: {0}")]
+    Validation(String),
 
     #[error("Internal error: {0}")]
     Internal(String),
@@ -36,7 +45,10 @@ impl AppError {
         match self {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -44,9 +56,12 @@ impl AppError {
 
     fn error_code(&self) -> &str {
         match self {
-            AppError::NotFound(_) => "NOT_FOUND",
+            AppError::NotFound(code) => code,
             AppError::BadRequest(_) => "BAD_REQUEST",
-            AppError::Conflict(_) => "CONFLICT",
+            AppError::Unauthorized(code) => code,
+            AppError::Forbidden(_) => "FORBIDDEN",
+            AppError::Conflict(code) => code,
+            AppError::Validation(_) => "VALIDATION_ERROR",
             AppError::Internal(_) => "INTERNAL_ERROR",
             AppError::Database(_) => "INTERNAL_ERROR",
         }
