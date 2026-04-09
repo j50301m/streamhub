@@ -1,47 +1,19 @@
-use serde::Deserialize;
+use cfgloader_rs::*;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(FromEnv, Debug, Clone)]
 pub struct AppConfig {
-    #[serde(default = "default_database_url")]
+    #[env(
+        "DATABASE_URL",
+        default = "postgres://streamhub:streamhub@localhost:5432/streamhub"
+    )]
     pub database_url: String,
 
-    #[serde(default = "default_host")]
+    #[env("HOST", default = "0.0.0.0")]
     pub host: String,
 
-    #[serde(default = "default_port")]
+    #[env("PORT", default = "8080")]
     pub port: u16,
 
-    #[serde(default = "default_mediamtx_url")]
+    #[env("MEDIAMTX_URL", default = "http://localhost:9997")]
     pub mediamtx_url: String,
-}
-
-fn default_database_url() -> String {
-    "postgres://streamhub:streamhub@localhost:5432/streamhub".to_string()
-}
-
-fn default_host() -> String {
-    "0.0.0.0".to_string()
-}
-
-fn default_port() -> u16 {
-    8080
-}
-
-fn default_mediamtx_url() -> String {
-    "http://localhost:9997".to_string()
-}
-
-impl AppConfig {
-    /// Load config from environment variables.
-    /// Env vars are prefixed with `STREAMHUB_` (e.g. `STREAMHUB_DATABASE_URL`).
-    pub fn load() -> Result<Self, config::ConfigError> {
-        let config = config::Config::builder()
-            .add_source(
-                config::Environment::with_prefix("STREAMHUB")
-                    .separator("_")
-                    .try_parsing(true),
-            )
-            .build()?;
-        config.try_deserialize()
-    }
 }

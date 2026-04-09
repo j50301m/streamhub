@@ -1,5 +1,6 @@
 use anyhow::Result;
 use axum::Router;
+use cfgloader_rs::FromEnv;
 use std::net::SocketAddr;
 use streamhub_common::AppState;
 use tower_http::cors::CorsLayer;
@@ -15,11 +16,16 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
-    // Load config
-    let config = streamhub_common::AppConfig::load().unwrap_or_else(|e| {
-        tracing::warn!("Failed to load config, using defaults: {e}");
-        // Return default config
-        serde_json::from_str("{}").expect("default config should deserialize")
+    // Load config from .env file (falls back to environment variables + defaults)
+    let config = streamhub_common::AppConfig::load_iter([
+        std::path::Path::new(".env.local"),
+        std::path::Path::new(".env"),
+    ])
+    .unwrap_or_else(|e| {
+        tracing::warn!("Failed to load .env file ({e}), using env vars / defaults");
+        // If no .env file, load from environment variables only
+        streamhub_common::AppConfig::load(std::path::Path::new("/dev/null"))
+            .expect("config with defaults should always load")
     });
 
     tracing::info!("Connecting to database...");

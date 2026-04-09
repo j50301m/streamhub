@@ -50,7 +50,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-config = "0.15"
+cfgloader_rs = "1.0"
 
 # Internal crates
 streamhub-common = { path = "crates/common" }

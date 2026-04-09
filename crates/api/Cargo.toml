@@ -21,6 +21,7 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
+cfgloader_rs = { workspace = true }
 streamhub-common = { workspace = true }
 streamhub-entity = { workspace = true }
 streamhub-migration = { workspace = true }
