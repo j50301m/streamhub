@@ -51,6 +51,9 @@ pub struct Model {
     #[sea_orm(nullable)]
     pub ended_at: Option<ChronoDateTimeUtc>,
     pub created_at: ChronoDateTimeUtc,
+    /// HLS playlist URL for VOD playback (set after transcoding completes).
+    #[sea_orm(nullable)]
+    pub hls_url: Option<String>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

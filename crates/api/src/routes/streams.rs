@@ -41,6 +41,7 @@ pub struct StreamResponse {
     pub title: Option<String>,
     pub status: stream::StreamStatus,
     pub vod_status: stream::VodStatus,
+    pub hls_url: Option<String>,
     pub urls: StreamUrls,
     pub started_at: Option<chrono::DateTime<Utc>>,
     pub ended_at: Option<chrono::DateTime<Utc>>,
@@ -79,7 +80,10 @@ pub struct LiveStreamResponse {
     pub stream_key: String,
     pub title: Option<String>,
     pub status: stream::StreamStatus,
+    pub vod_status: stream::VodStatus,
+    pub hls_url: Option<String>,
     pub started_at: Option<chrono::DateTime<Utc>>,
+    pub ended_at: Option<chrono::DateTime<Utc>>,
     pub urls: StreamUrls,
 }
 
@@ -90,7 +94,10 @@ fn build_live_stream_response(model: stream::Model, mediamtx_base: &str) -> Live
         stream_key: model.stream_key.clone(),
         title: model.title,
         status: model.status,
+        vod_status: model.vod_status,
+        hls_url: model.hls_url,
         started_at: model.started_at,
+        ended_at: model.ended_at,
         urls: StreamUrls {
             whip: format!("{mediamtx_base}/{key}/whip"),
             whep: format!("{mediamtx_base}/{key}/whep"),
@@ -108,6 +115,7 @@ fn build_stream_response(model: stream::Model, mediamtx_base: &str) -> StreamRes
         title: model.title,
         status: model.status,
         vod_status: model.vod_status,
+        hls_url: model.hls_url,
         urls: StreamUrls {
             whip: format!("{mediamtx_base}/{key}/whip"),
             whep: format!("{mediamtx_base}/{key}/whep"),
@@ -117,6 +125,25 @@ fn build_stream_response(model: stream::Model, mediamtx_base: &str) -> StreamRes
         ended_at: model.ended_at,
         created_at: model.created_at,
     }
+}
+
+/// GET /v1/streams/vod — public, returns ended streams with VOD ready
+async fn list_vod_streams(
+    State(state): State<AppState>,
+) -> Result<Json<DataResponse<Vec<LiveStreamResponse>>>, AppError> {
+    let models = stream::Entity::find()
+        .filter(stream::Column::Status.eq(stream::StreamStatus::Ended))
+        .filter(stream::Column::VodStatus.eq(stream::VodStatus::Ready))
+        .order_by_desc(stream::Column::EndedAt)
+        .all(&state.db)
+        .await?;
+
+    let data: Vec<LiveStreamResponse> = models
+        .into_iter()
+        .map(|m| build_live_stream_response(m, &state.mediamtx_url))
+        .collect();
+
+    Ok(Json(DataResponse { data }))
 }
 
 /// GET /v1/streams/live — public, returns all live streams
@@ -162,6 +189,7 @@ async fn create_stream(
         started_at: Set(None),
         ended_at: Set(None),
         created_at: Set(Utc::now()),
+        hls_url: Set(None),
     };
 
     let model = active.insert(&state.db).await?;
@@ -390,14 +418,17 @@ pub struct ListRecordingsQuery {
     pub per_page: Option<u64>,
 }
 
-/// GET /v1/streams/:id/recordings — owner only
+/// GET /v1/streams/:id/recordings — public
 async fn list_recordings(
-    current_user: CurrentUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Query(params): Query<ListRecordingsQuery>,
 ) -> Result<Json<PaginatedResponse<RecordingResponse>>, AppError> {
-    let _stream = load_owned_stream(&state, id, current_user.id).await?;
+    // Verify stream exists
+    let _stream = stream::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
 
     let page = params.page.unwrap_or(1).max(1);
     let per_page = params.per_page.unwrap_or(20).min(100);
@@ -431,6 +462,7 @@ pub fn stream_routes() -> Router<AppState> {
     Router::new()
         .route("/v1/streams", post(create_stream).get(list_streams))
         .route("/v1/streams/live", get(list_live_streams))
+        .route("/v1/streams/vod", get(list_vod_streams))
         .route(
             "/v1/streams/{id}",
             get(get_stream).patch(update_stream).delete(delete_stream),

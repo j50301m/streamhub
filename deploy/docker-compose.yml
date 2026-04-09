@@ -67,6 +67,7 @@ services:
       - "3443:3443"
     volumes:
       - ./ssl:/etc/nginx/ssl:ro
+      - ./recordings:/recordings:ro
     depends_on:
       - api
       - mediamtx

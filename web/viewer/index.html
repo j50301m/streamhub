@@ -21,14 +21,20 @@
         .status { padding: 10px; background: #16213e; border-radius: 4px; margin-top: 10px; font-family: monospace; font-size: 13px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
         label { font-size: 14px; color: #aaa; }
         .mode-info { font-size: 12px; color: #888; margin-top: 5px; }
-        .live-section { margin-bottom: 20px; }
-        .live-section h2 { font-size: 18px; color: #e94560; margin-bottom: 10px; }
+        .section { margin-bottom: 20px; }
+        .section h2 { font-size: 18px; margin-bottom: 10px; }
+        .section h2.live-title { color: #e94560; }
+        .section h2.vod-title { color: #4ecdc4; }
         .live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
         .live-card { background: #16213e; border: 1px solid #333; border-radius: 8px; padding: 14px; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
         .live-card:hover { border-color: #e94560; background: #1a2a4e; }
         .live-card .card-title { font-size: 15px; font-weight: bold; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .live-card .card-key { font-size: 12px; color: #888; font-family: monospace; }
         .live-card .card-time { font-size: 12px; color: #aaa; margin-top: 6px; }
+        .live-card .card-badge { display: inline-block; font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 10px; margin-bottom: 6px; }
+        .badge-live { background: #e94560; color: #fff; }
+        .badge-vod { background: #4ecdc4; color: #1a1a2e; }
+        .vod-card:hover { border-color: #4ecdc4; background: #1a2a4e; }
         .live-empty { color: #666; font-size: 14px; padding: 16px 0; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
@@ -37,9 +43,16 @@
     <div class="container">
         <h1>StreamHub Viewer</h1>
 
-        <div class="live-section">
-            <h2>Live Now</h2>
+        <div class="section">
+            <h2 class="live-title">Live Now</h2>
             <div id="live-grid" class="live-grid">
+                <div class="live-empty">Loading...</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2 class="vod-title">VOD Replays</h2>
+            <div id="vod-grid" class="live-grid">
                 <div class="live-empty">Loading...</div>
             </div>
         </div>
@@ -68,6 +81,7 @@
         let hls = null;
         let mediamtxBase = '';
         let hlsBase = '';
+        let vodBase = '';
         let refreshInterval = null;
 
         // Detect environment: if served via nginx (port 3000), use proxy paths
@@ -75,15 +89,15 @@
         function detectUrls() {
             const loc = window.location;
             if (loc.protocol === 'http:' || loc.protocol === 'https:') {
-                // Served via a web server — use relative proxy paths
                 document.getElementById('api-url').value = loc.origin + '/api';
                 mediamtxBase = loc.origin + '/mediamtx';
                 hlsBase = loc.origin + '/hls';
+                vodBase = loc.origin + '/vod';
             } else {
-                // Opened as a file or unknown — use direct localhost
                 document.getElementById('api-url').value = 'http://localhost:8080';
                 mediamtxBase = 'http://localhost:8889';
                 hlsBase = 'http://localhost:8888';
+                vodBase = 'http://localhost:3000/vod';
             }
         }
         detectUrls();
@@ -99,6 +113,12 @@
             return hrs + 'h ago';
         }
 
+        function escapeHtml(str) {
+            var div = document.createElement('div');
+            div.appendChild(document.createTextNode(str));
+            return div.innerHTML;
+        }
+
         function renderLiveStreams(streams) {
             const grid = document.getElementById('live-grid');
             if (!streams || streams.length === 0) {
@@ -110,6 +130,7 @@
                 var shortKey = s.stream_key.substring(0, 8);
                 var ago = s.started_at ? timeAgo(s.started_at) : '';
                 return '<div class="live-card" onclick="selectStream(\'' + s.stream_key + '\')">' +
+                    '<span class="card-badge badge-live">LIVE</span>' +
                     '<div class="card-title">' + escapeHtml(title) + '</div>' +
                     '<div class="card-key">' + shortKey + '</div>' +
                     '<div class="card-time">' + ago + '</div>' +
@@ -117,15 +138,68 @@
             }).join('');
         }
 
-        function escapeHtml(str) {
-            var div = document.createElement('div');
-            div.appendChild(document.createTextNode(str));
-            return div.innerHTML;
+        function renderVodStreams(streams) {
+            const grid = document.getElementById('vod-grid');
+            if (!streams || streams.length === 0) {
+                grid.innerHTML = '<div class="live-empty">No VOD replays available</div>';
+                return;
+            }
+            grid.innerHTML = streams.map(function(s) {
+                var title = s.title || 'Untitled';
+                var shortKey = s.stream_key.substring(0, 8);
+                var ago = s.ended_at ? timeAgo(s.ended_at) : '';
+                return '<div class="live-card vod-card" onclick="playVod(\'' + s.stream_key + '\', \'' + escapeHtml(s.hls_url || '') + '\')">' +
+                    '<span class="card-badge badge-vod">VOD</span>' +
+                    '<div class="card-title">' + escapeHtml(title) + '</div>' +
+                    '<div class="card-key">' + shortKey + '</div>' +
+                    '<div class="card-time">' + ago + '</div>' +
+                    '</div>';
+            }).join('');
         }
 
         function selectStream(streamKey) {
             document.getElementById('stream-key').value = streamKey;
             watchWHEP();
+        }
+
+        function playVod(streamKey, hlsUrl) {
+            stopWatching();
+            document.getElementById('stream-key').value = streamKey;
+
+            // Build absolute VOD URL from hls_url (which is like /vod/{key}/hls/index.m3u8)
+            var loc = window.location;
+            var fullUrl;
+            if (loc.protocol === 'http:' || loc.protocol === 'https:') {
+                fullUrl = loc.origin + hlsUrl;
+            } else {
+                fullUrl = 'http://localhost:3000' + hlsUrl;
+            }
+
+            var video = document.getElementById('player');
+
+            if (Hls.isSupported()) {
+                hls = new Hls();
+                hls.loadSource(fullUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play();
+                    log('VOD playback started.');
+                });
+                hls.on(Hls.Events.ERROR, function(event, data) {
+                    log('HLS error: ' + data.type + ' - ' + data.details);
+                });
+                document.getElementById('btn-stop').disabled = false;
+                document.getElementById('mode-info').textContent = 'Mode: VOD (HLS replay)';
+                log('Loading VOD: ' + fullUrl);
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = fullUrl;
+                video.addEventListener('loadedmetadata', function() { video.play(); });
+                document.getElementById('btn-stop').disabled = false;
+                document.getElementById('mode-info').textContent = 'Mode: VOD (Native HLS)';
+                log('Using native HLS for VOD: ' + fullUrl);
+            } else {
+                log('HLS not supported in this browser.');
+            }
         }
 
         async function fetchLiveStreams() {
@@ -140,9 +214,25 @@
             }
         }
 
+        async function fetchVodStreams() {
+            var apiUrl = document.getElementById('api-url').value;
+            try {
+                var res = await fetch(apiUrl + '/v1/streams/vod');
+                if (!res.ok) return;
+                var json = await res.json();
+                renderVodStreams(json.data);
+            } catch (e) {
+                // silently ignore refresh errors
+            }
+        }
+
         // Initial fetch and auto-refresh every 10 seconds
         fetchLiveStreams();
-        refreshInterval = setInterval(fetchLiveStreams, 10000);
+        fetchVodStreams();
+        refreshInterval = setInterval(function() {
+            fetchLiveStreams();
+            fetchVodStreams();
+        }, 10000);
 
         function log(msg) {
             const el = document.getElementById('log');
@@ -160,25 +250,6 @@
             document.getElementById('btn-stop').disabled = true;
             document.getElementById('mode-info').textContent = '';
             log('Stopped watching.');
-        }
-
-        async function checkStreamStatus() {
-            const apiUrl = document.getElementById('api-url').value;
-            const streamKey = document.getElementById('stream-key').value.trim();
-            if (!streamKey) { log('Please enter a stream key.'); return null; }
-
-            try {
-                const res = await fetch(apiUrl + '/v1/streams/' + streamKey);
-                if (!res.ok) {
-                    log('Stream not found or error: ' + res.status);
-                    return null;
-                }
-                const json = await res.json();
-                return json.data;
-            } catch (e) {
-                log('Error checking stream: ' + e.message);
-                return null;
-            }
         }
 
         async function watchWHEP() {
@@ -260,7 +331,6 @@
                 document.getElementById('mode-info').textContent = 'Mode: HLS (LL-HLS, compatible)';
                 log('Connecting via HLS: ' + hlsUrl);
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                // Safari native HLS
                 video.src = hlsUrl;
                 video.addEventListener('loadedmetadata', () => { video.play(); });
                 document.getElementById('btn-stop').disabled = false;
