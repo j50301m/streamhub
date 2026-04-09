@@ -1,10 +1,11 @@
+use axum::Json;
 use axum::Router;
-use axum::http::StatusCode;
 use axum::routing::get;
-use streamhub_common::AppState;
+use common::AppState;
+use serde_json::{Value, json};
 
-async fn healthz() -> StatusCode {
-    StatusCode::OK
+async fn healthz() -> Json<Value> {
+    Json(json!({"status": "ok"}))
 }
 
 pub fn health_routes() -> Router<AppState> {

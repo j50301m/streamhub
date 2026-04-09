@@ -1,5 +1,5 @@
 [package]
-name = "streamhub-hook"
+name = "hook"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ axum = { workspace = true }
 sea-orm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-streamhub-common = { workspace = true }
-streamhub-entity = { workspace = true }
+common = { workspace = true }
+entity = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }

@@ -1,5 +1,5 @@
 [package]
-name = "streamhub-migration"
+name = "migration"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -11,5 +11,5 @@ path = "src/main.rs"
 [dependencies]
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
-streamhub-entity = { workspace = true }
+entity = { workspace = true }
 tokio = { workspace = true }

@@ -51,6 +51,7 @@
         let pc = null;
         let hls = null;
         let mediamtxBase = 'http://localhost:8889';
+        let hlsBase = 'http://localhost:8888';
 
         function log(msg) {
             const el = document.getElementById('log');
@@ -147,7 +148,7 @@
             const streamKey = document.getElementById('stream-key').value.trim();
             if (!streamKey) { log('Please enter a stream key.'); return; }
 
-            const hlsUrl = mediamtxBase + '/' + streamKey + '/index.m3u8';
+            const hlsUrl = hlsBase + '/' + streamKey + '/index.m3u8';
             const video = document.getElementById('player');
 
             if (Hls.isSupported()) {

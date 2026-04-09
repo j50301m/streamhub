@@ -1,8 +1,8 @@
 use anyhow::Result;
 use axum::Router;
 use cfgloader_rs::FromEnv;
+use common::AppState;
 use std::net::SocketAddr;
-use streamhub_common::AppState;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
@@ -17,25 +17,22 @@ async fn main() -> Result<()> {
         .init();
 
     // Load config from .env file (falls back to environment variables + defaults)
-    let config = streamhub_common::AppConfig::load_iter([
+    let config = common::AppConfig::load_iter([
         std::path::Path::new(".env.local"),
         std::path::Path::new(".env"),
     ])
     .unwrap_or_else(|e| {
         tracing::warn!("Failed to load .env file ({e}), using env vars / defaults");
         // If no .env file, load from environment variables only
-        streamhub_common::AppConfig::load(std::path::Path::new("/dev/null"))
+        common::AppConfig::load(std::path::Path::new("/dev/null"))
             .expect("config with defaults should always load")
     });
 
     tracing::info!("Connecting to database...");
-    let db = streamhub_common::init_db(&config.database_url).await?;
+    let db = common::init_db(&config.database_url).await?;
 
-    tracing::info!("Running migrations...");
-    {
-        use streamhub_migration::MigratorTrait;
-        streamhub_migration::Migrator::up(&db, None).await?;
-    }
+    tracing::info!("Syncing database schema from entities...");
+    db.get_schema_registry("entity::*").sync(&db).await?;
 
     let state = AppState {
         db,

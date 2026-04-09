@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: streamhub
       POSTGRES_DB: streamhub
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -19,7 +19,15 @@ services:
   mediamtx:
     image: bluenviron/mediamtx:latest
     container_name: streamhub-mediamtx
-    network_mode: host
+    ports:
+      - "8554:8554"       # RTSP
+      - "8000:8000/udp"   # RTP
+      - "8001:8001/udp"   # RTCP
+      - "8888:8888"       # HLS
+      - "8889:8889"       # WebRTC (HTTP)
+      - "8189:8189/udp"   # WebRTC ICE (UDP)
+      - "8189:8189/tcp"   # WebRTC ICE (TCP)
+      - "9997:9997"       # API
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
     depends_on:

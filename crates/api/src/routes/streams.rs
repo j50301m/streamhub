@@ -3,10 +3,10 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
+use common::{AppError, AppState};
+use entity::stream;
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use serde::{Deserialize, Serialize};
-use streamhub_common::{AppError, AppState};
-use streamhub_entity::stream;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
