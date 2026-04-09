@@ -46,7 +46,7 @@
 
         <div class="controls">
             <label>API URL:</label>
-            <input type="text" id="api-url" value="http://localhost:8080" />
+            <input type="text" id="api-url" value="" />
         </div>
 
         <div class="controls">
@@ -66,9 +66,27 @@
     <script>
         let pc = null;
         let hls = null;
-        let mediamtxBase = 'http://localhost:8889';
-        let hlsBase = 'http://localhost:8888';
+        let mediamtxBase = '';
+        let hlsBase = '';
         let refreshInterval = null;
+
+        // Detect environment: if served via nginx (port 3000), use proxy paths
+        // Otherwise (direct file open or other port), use direct localhost URLs
+        function detectUrls() {
+            const loc = window.location;
+            if (loc.protocol === 'http:' || loc.protocol === 'https:') {
+                // Served via a web server — use relative proxy paths
+                document.getElementById('api-url').value = loc.origin + '/api';
+                mediamtxBase = loc.origin + '/mediamtx';
+                hlsBase = loc.origin + '/hls';
+            } else {
+                // Opened as a file or unknown — use direct localhost
+                document.getElementById('api-url').value = 'http://localhost:8080';
+                mediamtxBase = 'http://localhost:8889';
+                hlsBase = 'http://localhost:8888';
+            }
+        }
+        detectUrls();
 
         function timeAgo(dateStr) {
             const now = Date.now();
