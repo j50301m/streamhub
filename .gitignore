@@ -1,0 +1,31 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Dependencies
+Cargo.lock
+
+# Environment
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Worktrees (subagent working directories)
+/worktrees/
+
+# Recordings (MediaMTX local recordings)
+/recordings/
+
+# Claude setting
+.claude/*
+CLAUDE.md
