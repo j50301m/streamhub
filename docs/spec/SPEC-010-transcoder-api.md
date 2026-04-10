@@ -29,16 +29,29 @@
 
 ## 架構設計
 
-### 流程對比
+### 流程對比（依 STORAGE_ENABLED × TRANSCODER_ENABLED 組合）
+
+| STORAGE_ENABLED | TRANSCODER_ENABLED | 行為 |
+|---|---|---|
+| false | false | ffmpeg 轉 HLS → nginx serve 本地檔案 |
+| true（fake-gcs） | false | ffmpeg 轉 HLS → 上傳 HLS 到 fake-gcs → nginx /gcs/ proxy serve |
+| true（real GCS） | false | ffmpeg 轉 HLS → 上傳 HLS 到 real GCS → GCS 公開 URL |
+| true（real GCS） | true | 上傳 MP4 到 GCS → Transcoder API 轉多解析度 HLS → Pub/Sub 通知 → GCS 公開 URL |
 
 ```
-TRANSCODER_ENABLED=false（本地，現有邏輯不動）：
-  unpublish → recording hook → ffmpeg 轉 HLS → 上傳 HLS 到 GCS → vod_status=Ready
+STORAGE=false, TRANSCODER=false（純本地開發）：
+  recording hook → ffmpeg 轉 HLS → vod_status=Ready
+  hls_url = /vod/{key}/hls/index.m3u8（nginx serve 本地）
 
-TRANSCODER_ENABLED=true（正式環境）：
-  unpublish → recording hook → 上傳 MP4 到 GCS → Transcoder API create job → vod_status=Processing
+STORAGE=true, TRANSCODER=false（本地 fake-gcs 或 real GCS，單解析度）：
+  recording hook → ffmpeg 轉 HLS → 上傳 HLS 到 GCS → vod_status=Ready
+  hls_url = /gcs/{bucket}/...（fake-gcs）或 https://storage.googleapis.com/...（real）
+
+STORAGE=true, TRANSCODER=true（正式環境，多解析度 ABR）：
+  recording hook → 上傳 MP4 到 GCS → Transcoder API create job → vod_status=Processing
   ... Transcoder 處理中 ...
-  Pub/Sub → POST /internal/hooks/transcoder-complete → vod_status=Ready + hls_url
+  Pub/Sub → POST /internal/hooks/transcoder-complete → vod_status=Ready
+  hls_url = https://storage.googleapis.com/{bucket}/streams/{key}/output/index.m3u8
 ```
 
 ### Transcoder API
