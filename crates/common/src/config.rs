@@ -36,11 +36,27 @@ pub struct AppConfig {
 
     #[env("GCS_CREDENTIALS_PATH", default = "")]
     pub gcs_credentials_path: String,
+
+    #[env("TRANSCODER_ENABLED", default = "false")]
+    pub transcoder_enabled: String,
+
+    #[env("TRANSCODER_PROJECT_ID", default = "")]
+    pub transcoder_project_id: String,
+
+    #[env("TRANSCODER_LOCATION", default = "asia-east1")]
+    pub transcoder_location: String,
+
+    #[env("PUBSUB_VERIFY_TOKEN", default = "")]
+    pub pubsub_verify_token: String,
 }
 
 impl AppConfig {
     pub fn storage_enabled(&self) -> bool {
         self.storage_enabled.eq_ignore_ascii_case("true") || self.storage_enabled == "1"
+    }
+
+    pub fn transcoder_enabled(&self) -> bool {
+        self.transcoder_enabled.eq_ignore_ascii_case("true") || self.transcoder_enabled == "1"
     }
 
     pub fn gcs_endpoint_opt(&self) -> Option<&str> {

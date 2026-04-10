@@ -20,6 +20,10 @@ fn test_config() -> AppConfig {
         gcs_bucket: "test-bucket".to_string(),
         gcs_endpoint: String::new(),
         gcs_credentials_path: String::new(),
+        transcoder_enabled: "false".to_string(),
+        transcoder_project_id: String::new(),
+        transcoder_location: "asia-east1".to_string(),
+        pubsub_verify_token: String::new(),
     }
 }
 

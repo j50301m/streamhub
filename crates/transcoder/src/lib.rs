@@ -7,6 +7,10 @@ pub enum TranscoderError {
     FfmpegFailed(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("API error: {0}")]
+    Api(String),
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
 }
 
 /// Transcode an MP4 file to HLS (m3u8 + ts segments) in the given output directory.
@@ -51,4 +55,144 @@ pub async fn transcode_to_hls(
 
     tracing::info!(output = %output_m3u8.display(), "ffmpeg transcode completed");
     Ok(output_m3u8)
+}
+
+/// Create a GCP Transcoder API job to transcode an MP4 into multi-resolution ABR HLS.
+///
+/// Returns the job name (e.g. `projects/{p}/locations/{l}/jobs/{id}`).
+pub async fn create_job(
+    project_id: &str,
+    location: &str,
+    input_uri: &str,
+    output_uri: &str,
+    stream_id: &str,
+    auth_token: &str,
+) -> Result<String, TranscoderError> {
+    let url = format!(
+        "https://transcoder.googleapis.com/v1/projects/{project_id}/locations/{location}/jobs"
+    );
+
+    let body = serde_json::json!({
+        "inputUri": input_uri,
+        "outputUri": output_uri,
+        "config": {
+            "elementaryStreams": [
+                {
+                    "key": "video-1080p",
+                    "videoStream": {
+                        "h264": {
+                            "widthPixels": 1920,
+                            "heightPixels": 1080,
+                            "bitrateBps": 5_000_000
+                        }
+                    }
+                },
+                {
+                    "key": "video-720p",
+                    "videoStream": {
+                        "h264": {
+                            "widthPixels": 1280,
+                            "heightPixels": 720,
+                            "bitrateBps": 2_500_000
+                        }
+                    }
+                },
+                {
+                    "key": "video-360p",
+                    "videoStream": {
+                        "h264": {
+                            "widthPixels": 640,
+                            "heightPixels": 360,
+                            "bitrateBps": 1_000_000
+                        }
+                    }
+                },
+                {
+                    "key": "audio",
+                    "audioStream": {
+                        "codec": "aac",
+                        "bitrateBps": 128_000
+                    }
+                }
+            ],
+            "muxStreams": [
+                {
+                    "key": "hls-1080p",
+                    "container": "ts",
+                    "elementaryStreams": ["video-1080p", "audio"],
+                    "segmentSettings": { "segmentDuration": "6s" }
+                },
+                {
+                    "key": "hls-720p",
+                    "container": "ts",
+                    "elementaryStreams": ["video-720p", "audio"],
+                    "segmentSettings": { "segmentDuration": "6s" }
+                },
+                {
+                    "key": "hls-360p",
+                    "container": "ts",
+                    "elementaryStreams": ["video-360p", "audio"],
+                    "segmentSettings": { "segmentDuration": "6s" }
+                }
+            ],
+            "manifests": [
+                {
+                    "fileName": "index.m3u8",
+                    "type": "HLS",
+                    "muxStreams": ["hls-1080p", "hls-720p", "hls-360p"]
+                }
+            ],
+            "pubsubDestination": {
+                "topic": format!("projects/{project_id}/topics/streamhub-transcoder")
+            }
+        },
+        "labels": {
+            "stream_id": stream_id
+        }
+    });
+
+    tracing::info!(
+        %input_uri,
+        %output_uri,
+        %stream_id,
+        "Creating GCP Transcoder API job"
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {auth_token}"))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        tracing::error!(%status, %body, "Transcoder API request failed");
+        return Err(TranscoderError::Api(format!("{status}: {body}")));
+    }
+
+    let resp_body: serde_json::Value = resp.json().await?;
+    let job_name = resp_body["name"].as_str().unwrap_or_default().to_string();
+
+    tracing::info!(%job_name, "Transcoder job created");
+    Ok(job_name)
+}
+
+/// Obtain a GCP access token using `gcloud auth print-access-token`.
+pub async fn get_gcp_token() -> Result<String, TranscoderError> {
+    let output = Command::new("gcloud")
+        .args(["auth", "print-access-token"])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        return Err(TranscoderError::Api(
+            "gcloud auth print-access-token failed".to_string(),
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

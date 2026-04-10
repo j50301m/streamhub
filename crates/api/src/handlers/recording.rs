@@ -2,7 +2,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::Utc;
-use common::AppState;
+use common::{AppState, config::AppConfig};
 use entity::{recording, stream};
 use sea_orm::Set;
 use serde::Deserialize;
@@ -122,10 +122,18 @@ pub(crate) async fn recording_hook(
         let uow = state.uow.clone();
         let recordings_path = state.config.recordings_path.clone();
         let storage = state.storage.clone();
+        let config = state.config.clone();
 
         tokio::spawn(async move {
-            if let Err(e) =
-                run_transcode(uow, &recordings_path, stream_id, &stream_key, storage).await
+            if let Err(e) = run_transcode(
+                uow,
+                &recordings_path,
+                stream_id,
+                &stream_key,
+                storage,
+                &config,
+            )
+            .await
             {
                 tracing::error!(stream_id = %stream_id, error = %e, "Transcode task failed");
             }
@@ -137,12 +145,17 @@ pub(crate) async fn recording_hook(
 
 /// Find the latest MP4 recording for a stream, transcode it to HLS,
 /// optionally upload to GCS, and update the stream's vod_status + hls_url.
+///
+/// When `config.transcoder_enabled()` is true, uploads the raw MP4 to GCS
+/// and creates a GCP Transcoder API job (async — Pub/Sub webhook updates status later).
+/// Otherwise, uses local ffmpeg transcoding.
 async fn run_transcode(
     uow: repo::UnitOfWork,
     recordings_path: &str,
     stream_id: Uuid,
     stream_key: &str,
     storage: Option<Arc<dyn ObjectStorage>>,
+    config: &AppConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let latest_recording = uow
         .recording_repo()
@@ -150,20 +163,98 @@ async fn run_transcode(
         .await?
         .ok_or("no recording found")?;
 
-    let input_mp4 = PathBuf::from(&latest_recording.file_path);
+    let input_mp4 = map_to_local_path(&latest_recording.file_path, recordings_path);
+
+    if config.transcoder_enabled() {
+        run_transcode_gcp(&uow, &input_mp4, stream_id, stream_key, &storage, config).await
+    } else {
+        run_transcode_local(
+            &uow,
+            &input_mp4,
+            recordings_path,
+            stream_id,
+            stream_key,
+            storage,
+        )
+        .await
+    }
+}
+
+/// GCP Transcoder API path: upload MP4 to GCS, then create a transcoder job.
+/// The job runs asynchronously — a Pub/Sub webhook will update vod_status when done.
+async fn run_transcode_gcp(
+    uow: &repo::UnitOfWork,
+    input_mp4: &Path,
+    stream_id: Uuid,
+    stream_key: &str,
+    storage: &Option<Arc<dyn ObjectStorage>>,
+    config: &AppConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let store = storage
+        .as_ref()
+        .ok_or("GCS storage is required when TRANSCODER_ENABLED=true")?;
+
+    // Upload raw MP4 to GCS
+    let mp4_key = format!("streams/{}/input.mp4", stream_key);
+    store
+        .upload_file(input_mp4, &mp4_key)
+        .await
+        .map_err(|e| format!("GCS upload failed: {e}"))?;
+    tracing::info!(stream_id = %stream_id, %mp4_key, "Uploaded raw MP4 to GCS");
+
+    // Get auth token and create transcoder job
+    let token = transcoder::get_gcp_token().await?;
+    let input_uri = format!("gs://{}/{}", config.gcs_bucket, mp4_key);
+    let output_uri = format!("gs://{}/streams/{}/output/", config.gcs_bucket, stream_key);
+
+    let job_name = transcoder::create_job(
+        &config.transcoder_project_id,
+        &config.transcoder_location,
+        &input_uri,
+        &output_uri,
+        &stream_id.to_string(),
+        &token,
+    )
+    .await?;
+
+    tracing::info!(stream_id = %stream_id, %job_name, "Transcoder job created, waiting for Pub/Sub callback");
+
+    // Set hls_url to the expected output path (will be confirmed by webhook)
+    let hls_url = format!(
+        "https://storage.googleapis.com/{}/streams/{}/output/index.m3u8",
+        config.gcs_bucket, stream_key
+    );
+    let active = stream::ActiveModel {
+        id: Set(stream_id),
+        hls_url: Set(Some(hls_url)),
+        ..Default::default()
+    };
+    uow.stream_repo().update(active).await?;
+
+    Ok(())
+}
+
+/// Local ffmpeg path: transcode to HLS, optionally upload to GCS, update vod_status=Ready.
+async fn run_transcode_local(
+    uow: &repo::UnitOfWork,
+    input_mp4: &Path,
+    recordings_path: &str,
+    stream_id: Uuid,
+    stream_key: &str,
+    storage: Option<Arc<dyn ObjectStorage>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let output_dir = PathBuf::from(recordings_path).join(stream_key).join("hls");
 
     tracing::info!(
         stream_id = %stream_id,
         input = %input_mp4.display(),
         output_dir = %output_dir.display(),
-        "Starting VOD transcode"
+        "Starting local VOD transcode"
     );
 
-    match transcoder::transcode_to_hls(&input_mp4, &output_dir).await {
+    match transcoder::transcode_to_hls(input_mp4, &output_dir).await {
         Ok(_) => {
             let hls_url = if let Some(ref store) = storage {
-                // Upload HLS directory to GCS
                 let gcs_prefix = format!("streams/{}/hls", stream_key);
                 store
                     .upload_dir(&output_dir, &gcs_prefix)
