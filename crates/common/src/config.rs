@@ -48,6 +48,9 @@ pub struct AppConfig {
 
     #[env("PUBSUB_VERIFY_TOKEN", default = "")]
     pub pubsub_verify_token: String,
+
+    #[env("OTEL_EXPORTER_OTLP_ENDPOINT", default = "http://localhost:4317")]
+    pub otel_endpoint: String,
 }
 
 impl AppConfig {
