@@ -40,9 +40,13 @@ impl GcsStorage {
             object_store::gcp::GoogleCloudStorageBuilder::new().with_bucket_name(bucket);
 
         if let Some(ep) = endpoint {
+            // Custom endpoint (e.g. fake-gcs-server): set base URL, skip signature,
+            // and provide a fake service account key to disable OAuth token lookup.
+            let fake_key = r#"{"private_key": "private_key", "private_key_id": "id", "client_email": "fake@example.com", "disable_oauth": true}"#;
             builder = builder
                 .with_config(object_store::gcp::GoogleConfigKey::BaseUrl, ep)
-                .with_config(object_store::gcp::GoogleConfigKey::SkipSignature, "true");
+                .with_config(object_store::gcp::GoogleConfigKey::SkipSignature, "true")
+                .with_service_account_key(fake_key);
         }
         if let Some(creds) = credentials_path {
             builder = builder.with_service_account_path(creds);
