@@ -21,16 +21,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.api
     container_name: streamhub-api
-    environment:
-      DATABASE_URL: postgres://streamhub:streamhub@postgres:5432/streamhub
-      JWT_SECRET: dev-secret-change-in-production
-      RECORDINGS_PATH: /recordings
-      MEDIAMTX_URL: http://mediamtx:9997
-      HOST: 0.0.0.0
-      PORT: 8080
-      STORAGE_ENABLED: "true"
-      GCS_BUCKET: streamhub-recordings-dev
-      GCS_ENDPOINT: http://fake-gcs:4443
+    env_file: .env
     ports:
       - "8080:8080"
     volumes:
