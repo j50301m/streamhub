@@ -30,7 +30,7 @@ services:
       PORT: 8080
       STORAGE_ENABLED: "true"
       GCS_BUCKET: streamhub-recordings-dev
-      GCS_ENDPOINT: http://fake-gcs:4443/storage/v1/
+      GCS_ENDPOINT: http://fake-gcs:4443
     ports:
       - "8080:8080"
     volumes:

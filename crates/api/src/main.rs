@@ -51,6 +51,7 @@ async fn main() -> Result<()> {
             config.gcs_endpoint_opt(),
             config.gcs_credentials_path_opt(),
         )?;
+        gcs.ensure_bucket().await?;
         tracing::info!(bucket = %config.gcs_bucket, "GCS storage enabled");
         Some(Arc::new(gcs))
     } else {
