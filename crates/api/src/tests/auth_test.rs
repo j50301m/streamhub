@@ -40,6 +40,7 @@ async fn register_success() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let req = Request::builder()
@@ -74,6 +75,7 @@ async fn register_duplicate_email_returns_409() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let req = Request::builder()
@@ -104,6 +106,7 @@ async fn login_success() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let req = Request::builder()
@@ -136,6 +139,7 @@ async fn login_wrong_password_returns_401() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let req = Request::builder()
@@ -164,6 +168,7 @@ async fn login_user_not_found_returns_401() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let _ = JWT_SECRET; // suppress unused warning

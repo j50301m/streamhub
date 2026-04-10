@@ -27,6 +27,7 @@ entity = { workspace = true }
 repo = { workspace = true }
 auth = { workspace = true }
 transcoder = { workspace = true }
+storage = { workspace = true }
 
 [dev-dependencies]
 sea-orm = { workspace = true, features = ["mock"] }

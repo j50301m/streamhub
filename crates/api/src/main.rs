@@ -4,6 +4,8 @@ use cfgloader_rs::FromEnv;
 use common::AppState;
 use repo::UnitOfWork;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use storage::GcsStorage;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
@@ -43,9 +45,23 @@ async fn main() -> Result<()> {
 
     let addr = SocketAddr::new(config.host.parse()?, config.port);
 
+    let storage: Option<Arc<dyn storage::ObjectStorage>> = if config.storage_enabled() {
+        let gcs = GcsStorage::new(
+            &config.gcs_bucket,
+            config.gcs_endpoint_opt(),
+            config.gcs_credentials_path_opt(),
+        )?;
+        tracing::info!(bucket = %config.gcs_bucket, "GCS storage enabled");
+        Some(Arc::new(gcs))
+    } else {
+        tracing::info!("GCS storage disabled, using local file serving");
+        None
+    };
+
     let state = AppState {
         uow: UnitOfWork::new(db),
         config,
+        storage,
     };
 
     let app = Router::new()

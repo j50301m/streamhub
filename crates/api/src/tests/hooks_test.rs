@@ -73,6 +73,7 @@ async fn publish_sets_status_to_live() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let req = Request::builder()
@@ -111,6 +112,7 @@ async fn unpublish_sets_status_to_ended() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let req = Request::builder()
@@ -139,6 +141,7 @@ async fn publish_stream_not_found_returns_404() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let req = Request::builder()
@@ -191,6 +194,7 @@ async fn recording_hook_ended_stream_triggers_transcode() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let req = Request::builder()
@@ -234,6 +238,7 @@ async fn recording_hook_live_stream_no_transcode() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let req = Request::builder()
