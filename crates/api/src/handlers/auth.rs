@@ -8,6 +8,7 @@ use sea_orm::Set;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::extractors::AppJson;
 use crate::middleware::CurrentUser;
 
 // ── Request / Response types ───────────────────────────────────────
@@ -16,7 +17,7 @@ use crate::middleware::CurrentUser;
 pub struct RegisterRequest {
     pub email: String,
     pub password: String,
-    pub role: String,
+    pub role: user::UserRole,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,7 +30,7 @@ pub struct LoginRequest {
 pub struct UserResponse {
     pub id: Uuid,
     pub email: String,
-    pub role: String,
+    pub role: user::UserRole,
     pub created_at: chrono::DateTime<Utc>,
 }
 
@@ -68,26 +69,8 @@ fn user_to_response(model: &user::Model) -> UserResponse {
     UserResponse {
         id: model.id,
         email: model.email.clone(),
-        role: role_to_string(&model.role),
+        role: model.role.clone(),
         created_at: model.created_at,
-    }
-}
-
-fn role_to_string(role: &user::UserRole) -> String {
-    match role {
-        user::UserRole::Broadcaster => "broadcaster".to_string(),
-        user::UserRole::Viewer => "viewer".to_string(),
-        user::UserRole::Admin => "admin".to_string(),
-    }
-}
-
-fn parse_role(s: &str) -> Result<user::UserRole, AppError> {
-    match s.to_lowercase().as_str() {
-        "broadcaster" => Ok(user::UserRole::Broadcaster),
-        "viewer" => Ok(user::UserRole::Viewer),
-        _ => Err(AppError::Validation(
-            "role must be 'broadcaster' or 'viewer'".to_string(),
-        )),
     }
 }
 
@@ -96,7 +79,7 @@ fn parse_role(s: &str) -> Result<user::UserRole, AppError> {
 /// POST /v1/auth/register
 pub(crate) async fn register(
     State(state): State<AppState>,
-    Json(payload): Json<RegisterRequest>,
+    AppJson(payload): AppJson<RegisterRequest>,
 ) -> Result<(StatusCode, Json<DataResponse<AuthResponse>>), AppError> {
     // Validate
     let email = payload.email.trim().to_lowercase();
@@ -110,7 +93,12 @@ pub(crate) async fn register(
             "password must be at least 8 characters".to_string(),
         ));
     }
-    let role = parse_role(&payload.role)?;
+    // Block admin self-registration
+    if payload.role == user::UserRole::Admin {
+        return Err(AppError::Validation(
+            "role must be 'broadcaster' or 'viewer'".to_string(),
+        ));
+    }
 
     // Use transaction with FOR UPDATE to prevent concurrent registration
     let txn = state.uow.begin().await?;
@@ -130,7 +118,7 @@ pub(crate) async fn register(
         id: Set(user_id),
         email: Set(email),
         password_hash: Set(password_hash),
-        role: Set(role),
+        role: Set(payload.role),
         created_at: Set(Utc::now()),
     };
     let model = txn.user_repo().create(active).await?;
@@ -156,7 +144,7 @@ pub(crate) async fn register(
 /// POST /v1/auth/login
 pub(crate) async fn login(
     State(state): State<AppState>,
-    Json(payload): Json<LoginRequest>,
+    AppJson(payload): AppJson<LoginRequest>,
 ) -> Result<Json<DataResponse<AuthResponse>>, AppError> {
     let email = payload.email.trim().to_lowercase();
 
@@ -188,7 +176,7 @@ pub(crate) async fn login(
 /// POST /v1/auth/refresh
 pub(crate) async fn refresh(
     State(state): State<AppState>,
-    Json(payload): Json<RefreshRequest>,
+    AppJson(payload): AppJson<RefreshRequest>,
 ) -> Result<Json<DataResponse<TokenResponse>>, AppError> {
     let claims = auth::jwt::verify_token(&payload.refresh_token, &state.config.jwt_secret)
         .map_err(|e| match e {

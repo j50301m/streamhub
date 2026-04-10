@@ -10,6 +10,8 @@ use sea_orm::Set;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::extractors::AppJson;
+
 use crate::middleware::CurrentUser;
 
 #[derive(Debug, Deserialize)]
@@ -155,7 +157,7 @@ pub(crate) async fn list_live_streams(
 pub(crate) async fn create_stream(
     current_user: CurrentUser,
     State(state): State<AppState>,
-    Json(payload): Json<CreateStreamRequest>,
+    AppJson(payload): AppJson<CreateStreamRequest>,
 ) -> Result<(StatusCode, Json<DataResponse<StreamResponse>>), AppError> {
     if current_user.role != UserRole::Broadcaster && current_user.role != UserRole::Admin {
         return Err(AppError::Forbidden(
@@ -255,7 +257,7 @@ pub(crate) async fn update_stream(
     current_user: CurrentUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Json(payload): Json<UpdateStreamRequest>,
+    AppJson(payload): AppJson<UpdateStreamRequest>,
 ) -> Result<Json<DataResponse<StreamResponse>>, AppError> {
     let txn = state.uow.begin().await?;
 
