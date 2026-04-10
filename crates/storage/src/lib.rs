@@ -106,14 +106,38 @@ impl std::fmt::Debug for GcsStorage {
 #[async_trait]
 impl ObjectStorage for GcsStorage {
     async fn upload_file(&self, local_path: &Path, gcs_key: &str) -> Result<String, StorageError> {
-        use object_store::ObjectStoreExt as _;
-
         let data = tokio::fs::read(local_path).await?;
-        let path = object_store::path::Path::from(gcs_key);
-        self.store
-            .put(&path, data.into())
-            .await
-            .map_err(|e| StorageError::Upload(e.to_string()))?;
+
+        if let Some(ep) = &self.endpoint {
+            // fake-gcs-server: use JSON API (POST /upload/storage/v1/b/{bucket}/o?uploadType=media&name={key})
+            let url = format!(
+                "{}/upload/storage/v1/b/{}/o?uploadType=media&name={}",
+                ep.trim_end_matches('/'),
+                self.bucket,
+                gcs_key
+            );
+            let client = reqwest::Client::new();
+            let resp = client
+                .post(&url)
+                .header("Content-Type", "application/octet-stream")
+                .body(data)
+                .send()
+                .await
+                .map_err(|e| StorageError::Upload(e.to_string()))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(StorageError::Upload(format!("{status}: {body}")));
+            }
+        } else {
+            // Real GCS: use object_store XML API
+            use object_store::ObjectStoreExt as _;
+            let path = object_store::path::Path::from(gcs_key);
+            self.store
+                .put(&path, data.into())
+                .await
+                .map_err(|e| StorageError::Upload(e.to_string()))?;
+        }
 
         tracing::info!(gcs_key, "Uploaded file to GCS");
         Ok(gcs_key.to_string())

@@ -67,7 +67,7 @@ services:
     container_name: streamhub-fake-gcs
     ports:
       - "4443:4443"
-    command: ["-scheme", "http", "-port", "4443", "-public-host", "localhost:4443", "-external-url", "http://fake-gcs:4443"]
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "fake-gcs:4443", "-external-url", "http://fake-gcs:4443"]
     volumes:
       - ./gcs-data:/storage
 
