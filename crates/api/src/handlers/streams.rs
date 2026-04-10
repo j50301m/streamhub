@@ -1,7 +1,6 @@
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
-use axum::{Json, Router};
 use chrono::Utc;
 use common::{AppError, AppState};
 use entity::stream;
@@ -53,18 +52,18 @@ pub struct StreamUrls {
 }
 
 #[derive(Debug, Serialize)]
-struct DataResponse<T: Serialize> {
-    data: T,
+pub(crate) struct DataResponse<T: Serialize> {
+    pub(crate) data: T,
 }
 
 #[derive(Debug, Serialize)]
-struct PaginatedResponse<T: Serialize> {
-    data: Vec<T>,
-    pagination: Pagination,
+pub(crate) struct PaginatedResponse<T: Serialize> {
+    pub(crate) data: Vec<T>,
+    pub(crate) pagination: Pagination,
 }
 
 #[derive(Debug, Serialize)]
-struct Pagination {
+pub(crate) struct Pagination {
     page: u64,
     per_page: u64,
     total: u64,
@@ -124,8 +123,8 @@ fn build_stream_response(model: stream::Model, mediamtx_base: &str) -> StreamRes
     }
 }
 
-/// GET /v1/streams/vod — public, returns ended streams with VOD ready
-async fn list_vod_streams(
+/// GET /v1/streams/vod
+pub(crate) async fn list_vod_streams(
     State(state): State<AppState>,
 ) -> Result<Json<DataResponse<Vec<LiveStreamResponse>>>, AppError> {
     let models = state.uow.stream_repo().list_vod().await?;
@@ -138,8 +137,8 @@ async fn list_vod_streams(
     Ok(Json(DataResponse { data }))
 }
 
-/// GET /v1/streams/live — public, returns all live streams
-async fn list_live_streams(
+/// GET /v1/streams/live
+pub(crate) async fn list_live_streams(
     State(state): State<AppState>,
 ) -> Result<Json<DataResponse<Vec<LiveStreamResponse>>>, AppError> {
     let models = state.uow.stream_repo().list_live().await?;
@@ -152,8 +151,8 @@ async fn list_live_streams(
     Ok(Json(DataResponse { data }))
 }
 
-/// POST /v1/streams — requires auth (broadcaster role)
-async fn create_stream(
+/// POST /v1/streams
+pub(crate) async fn create_stream(
     current_user: CurrentUser,
     State(state): State<AppState>,
     Json(payload): Json<CreateStreamRequest>,
@@ -189,8 +188,8 @@ async fn create_stream(
     Ok((StatusCode::CREATED, Json(DataResponse { data: resp })))
 }
 
-/// GET /v1/streams — requires auth, returns user's own streams
-async fn list_streams(
+/// GET /v1/streams
+pub(crate) async fn list_streams(
     current_user: CurrentUser,
     State(state): State<AppState>,
     Query(params): Query<ListStreamsQuery>,
@@ -235,8 +234,8 @@ async fn list_streams(
     }))
 }
 
-/// GET /v1/streams/:id — public
-async fn get_stream(
+/// GET /v1/streams/:id
+pub(crate) async fn get_stream(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<DataResponse<StreamResponse>>, AppError> {
@@ -251,8 +250,8 @@ async fn get_stream(
     Ok(Json(DataResponse { data: resp }))
 }
 
-/// PATCH /v1/streams/:id — owner only
-async fn update_stream(
+/// PATCH /v1/streams/:id
+pub(crate) async fn update_stream(
     current_user: CurrentUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -285,8 +284,8 @@ async fn update_stream(
     Ok(Json(DataResponse { data: resp }))
 }
 
-/// DELETE /v1/streams/:id — owner only, not allowed if Live
-async fn delete_stream(
+/// DELETE /v1/streams/:id
+pub(crate) async fn delete_stream(
     current_user: CurrentUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -313,8 +312,8 @@ async fn delete_stream(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// POST /v1/streams/:id/end — owner only, must be Live
-async fn end_stream(
+/// POST /v1/streams/:id/end
+pub(crate) async fn end_stream(
     current_user: CurrentUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -356,8 +355,8 @@ pub struct StreamTokenResponse {
     pub whip_url: String,
 }
 
-/// POST /v1/streams/:id/token — owner + broadcaster only, generates a 1hr push token
-async fn create_stream_token(
+/// POST /v1/streams/:id/token
+pub(crate) async fn create_stream_token(
     current_user: CurrentUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -439,8 +438,8 @@ pub struct ListRecordingsQuery {
     pub per_page: Option<u64>,
 }
 
-/// GET /v1/streams/:id/recordings — public
-async fn list_recordings(
+/// GET /v1/streams/:id/recordings
+pub(crate) async fn list_recordings(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Query(params): Query<ListRecordingsQuery>,
@@ -478,155 +477,4 @@ async fn list_recordings(
             total_pages,
         },
     }))
-}
-
-pub fn stream_routes() -> Router<AppState> {
-    Router::new()
-        .route("/v1/streams", post(create_stream).get(list_streams))
-        .route("/v1/streams/live", get(list_live_streams))
-        .route("/v1/streams/vod", get(list_vod_streams))
-        .route(
-            "/v1/streams/{id}",
-            get(get_stream).patch(update_stream).delete(delete_stream),
-        )
-        .route("/v1/streams/{id}/end", post(end_stream))
-        .route("/v1/streams/{id}/token", post(create_stream_token))
-        .route("/v1/streams/{id}/recordings", get(list_recordings))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
-    use common::AppConfig;
-    use entity::user;
-    use http_body_util::BodyExt;
-    use repo::UnitOfWork;
-    use sea_orm::{DbBackend, MockDatabase, MockExecResult};
-    use tower::ServiceExt;
-
-    const JWT_SECRET: &str = "test-secret";
-
-    fn test_config() -> AppConfig {
-        AppConfig {
-            database_url: String::new(),
-            host: "127.0.0.1".to_string(),
-            port: 0,
-            mediamtx_url: "http://localhost:9997".to_string(),
-            jwt_secret: JWT_SECRET.to_string(),
-            recordings_path: "/tmp/recordings".to_string(),
-        }
-    }
-
-    fn broadcaster_user() -> user::Model {
-        user::Model {
-            id: Uuid::new_v4(),
-            email: "broadcaster@example.com".to_string(),
-            password_hash: String::new(),
-            role: user::UserRole::Broadcaster,
-            created_at: Utc::now(),
-        }
-    }
-
-    fn viewer_user() -> user::Model {
-        user::Model {
-            id: Uuid::new_v4(),
-            email: "viewer@example.com".to_string(),
-            password_hash: String::new(),
-            role: user::UserRole::Viewer,
-            created_at: Utc::now(),
-        }
-    }
-
-    fn test_stream(user_id: Uuid) -> stream::Model {
-        let id = Uuid::new_v4();
-        stream::Model {
-            id,
-            user_id: Some(user_id),
-            stream_key: id.to_string(),
-            title: Some("Test Stream".to_string()),
-            status: stream::StreamStatus::Pending,
-            vod_status: stream::VodStatus::None,
-            started_at: None,
-            ended_at: None,
-            created_at: Utc::now(),
-            hls_url: None,
-        }
-    }
-
-    fn auth_header(user_id: Uuid) -> String {
-        let token = auth::jwt::sign_access_token(user_id, JWT_SECRET).unwrap();
-        format!("Bearer {token}")
-    }
-
-    async fn body_to_json(body: Body) -> serde_json::Value {
-        let bytes = body.collect().await.unwrap().to_bytes();
-        serde_json::from_slice(&bytes).unwrap()
-    }
-
-    #[tokio::test]
-    async fn create_stream_success() {
-        let user = broadcaster_user();
-        let s = test_stream(user.id);
-
-        // Mock: auth middleware find_by_id, then txn create
-        let db = MockDatabase::new(DbBackend::Postgres)
-            .append_query_results([vec![user.clone()]]) // auth: find_by_id
-            .append_query_results([vec![s.clone()]]) // create stream
-            .append_exec_results([MockExecResult {
-                last_insert_id: 0,
-                rows_affected: 1,
-            }])
-            .into_connection();
-
-        let state = AppState {
-            uow: UnitOfWork::new(db),
-            config: test_config(),
-        };
-
-        let app = stream_routes().with_state(state);
-
-        let req = Request::builder()
-            .method("POST")
-            .uri("/v1/streams")
-            .header("content-type", "application/json")
-            .header("authorization", auth_header(user.id))
-            .body(Body::from(r#"{"title":"My Stream"}"#))
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::CREATED);
-
-        let json = body_to_json(resp.into_body()).await;
-        assert_eq!(json["data"]["title"], "Test Stream");
-    }
-
-    #[tokio::test]
-    async fn create_stream_viewer_forbidden() {
-        let user = viewer_user();
-
-        // Mock: auth middleware find_by_id
-        let db = MockDatabase::new(DbBackend::Postgres)
-            .append_query_results([vec![user.clone()]]) // auth: find_by_id
-            .into_connection();
-
-        let state = AppState {
-            uow: UnitOfWork::new(db),
-            config: test_config(),
-        };
-
-        let app = stream_routes().with_state(state);
-
-        let req = Request::builder()
-            .method("POST")
-            .uri("/v1/streams")
-            .header("content-type", "application/json")
-            .header("authorization", auth_header(user.id))
-            .body(Body::from(r#"{"title":"My Stream"}"#))
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-    }
 }

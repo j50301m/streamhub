@@ -5,7 +5,6 @@ members = [
     "crates/auth",
     "crates/common",
     "crates/entity",
-    "crates/hook",
     "crates/migration",
     "crates/repo",
     "crates/storage",
@@ -66,7 +65,6 @@ repo = { path = "crates/repo" }
 common = { path = "crates/common" }
 entity = { path = "crates/entity" }
 migration = { path = "crates/migration" }
-hook = { path = "crates/hook" }
 auth = { path = "crates/auth" }
 stream = { path = "crates/stream" }
 storage = { path = "crates/storage" }
