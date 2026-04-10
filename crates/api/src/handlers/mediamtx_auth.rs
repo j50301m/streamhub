@@ -21,7 +21,7 @@ pub struct MediaMtxAuthRequest {
 /// MediaMTX HTTP auth callback.
 /// - action=publish -> validate stream token from query param
 /// - action=read -> check stream exists and is Live
-pub async fn mediamtx_auth(
+pub(crate) async fn mediamtx_auth(
     State(state): State<AppState>,
     Json(payload): Json<MediaMtxAuthRequest>,
 ) -> StatusCode {

@@ -8,8 +8,12 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
+pub mod handlers;
 pub mod middleware;
 mod routes;
+
+#[cfg(test)]
+mod tests;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,10 +48,7 @@ async fn main() -> Result<()> {
     };
 
     let app = Router::new()
-        .merge(routes::health_routes())
-        .merge(routes::auth_routes())
-        .merge(routes::stream_routes())
-        .merge(routes::hook_routes())
+        .merge(routes::app_router())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
