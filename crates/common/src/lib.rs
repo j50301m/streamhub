@@ -4,17 +4,15 @@ pub mod error;
 pub use config::AppConfig;
 pub use error::AppError;
 
+use repo::UnitOfWork;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::time::Duration;
 
 /// Shared application state passed to all route handlers.
 #[derive(Debug, Clone)]
 pub struct AppState {
-    pub db: DatabaseConnection,
-    pub mediamtx_url: String,
-    pub jwt_secret: String,
-    /// Local filesystem path where recordings are stored (for path mapping).
-    pub recordings_path: String,
+    pub uow: UnitOfWork,
+    pub config: AppConfig,
 }
 
 /// Initialize database connection pool with statement_timeout.

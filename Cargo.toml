@@ -7,6 +7,7 @@ members = [
     "crates/entity",
     "crates/hook",
     "crates/migration",
+    "crates/repo",
     "crates/storage",
     "crates/stream",
     "crates/transcoder",
@@ -61,6 +62,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 cfgloader_rs = "1.0"
 
 # Internal crates
+repo = { path = "crates/repo" }
 common = { path = "crates/common" }
 entity = { path = "crates/entity" }
 migration = { path = "crates/migration" }

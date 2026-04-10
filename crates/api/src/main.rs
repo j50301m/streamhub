@@ -2,6 +2,7 @@ use anyhow::Result;
 use axum::Router;
 use cfgloader_rs::FromEnv;
 use common::AppState;
+use repo::UnitOfWork;
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -35,11 +36,11 @@ async fn main() -> Result<()> {
     tracing::info!("Syncing database schema from entities...");
     db.get_schema_registry("entity::*").sync(&db).await?;
 
+    let addr = SocketAddr::new(config.host.parse()?, config.port);
+
     let state = AppState {
-        db,
-        mediamtx_url: config.mediamtx_url.clone(),
-        jwt_secret: config.jwt_secret.clone(),
-        recordings_path: config.recordings_path.clone(),
+        uow: UnitOfWork::new(db),
+        config,
     };
 
     let app = Router::new()
@@ -50,8 +51,6 @@ async fn main() -> Result<()> {
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
-
-    let addr = SocketAddr::new(config.host.parse()?, config.port);
     tracing::info!("Starting server on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

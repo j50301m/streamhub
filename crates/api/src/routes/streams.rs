@@ -4,15 +4,12 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use common::{AppError, AppState};
+use entity::stream;
+use entity::stream_token;
 use entity::user::UserRole;
-use entity::{recording, stream};
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
-};
+use sea_orm::Set;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-
-use entity::stream_token;
 
 use crate::middleware::CurrentUser;
 
@@ -131,16 +128,11 @@ fn build_stream_response(model: stream::Model, mediamtx_base: &str) -> StreamRes
 async fn list_vod_streams(
     State(state): State<AppState>,
 ) -> Result<Json<DataResponse<Vec<LiveStreamResponse>>>, AppError> {
-    let models = stream::Entity::find()
-        .filter(stream::Column::Status.eq(stream::StreamStatus::Ended))
-        .filter(stream::Column::VodStatus.eq(stream::VodStatus::Ready))
-        .order_by_desc(stream::Column::EndedAt)
-        .all(&state.db)
-        .await?;
+    let models = state.uow.stream_repo().list_vod().await?;
 
     let data: Vec<LiveStreamResponse> = models
         .into_iter()
-        .map(|m| build_live_stream_response(m, &state.mediamtx_url))
+        .map(|m| build_live_stream_response(m, &state.config.mediamtx_url))
         .collect();
 
     Ok(Json(DataResponse { data }))
@@ -150,15 +142,11 @@ async fn list_vod_streams(
 async fn list_live_streams(
     State(state): State<AppState>,
 ) -> Result<Json<DataResponse<Vec<LiveStreamResponse>>>, AppError> {
-    let models = stream::Entity::find()
-        .filter(stream::Column::Status.eq(stream::StreamStatus::Live))
-        .order_by_desc(stream::Column::StartedAt)
-        .all(&state.db)
-        .await?;
+    let models = state.uow.stream_repo().list_live().await?;
 
     let data: Vec<LiveStreamResponse> = models
         .into_iter()
-        .map(|m| build_live_stream_response(m, &state.mediamtx_url))
+        .map(|m| build_live_stream_response(m, &state.config.mediamtx_url))
         .collect();
 
     Ok(Json(DataResponse { data }))
@@ -192,8 +180,11 @@ async fn create_stream(
         hls_url: Set(None),
     };
 
-    let model = active.insert(&state.db).await?;
-    let resp = build_stream_response(model, &state.mediamtx_url);
+    let txn = state.uow.begin().await?;
+    let model = txn.stream_repo().create(active).await?;
+    txn.commit().await?;
+
+    let resp = build_stream_response(model, &state.config.mediamtx_url);
 
     Ok((StatusCode::CREATED, Json(DataResponse { data: resp })))
 }
@@ -207,31 +198,30 @@ async fn list_streams(
     let page = params.page.unwrap_or(1).max(1);
     let per_page = params.per_page.unwrap_or(20).min(100);
 
-    let mut query = stream::Entity::find().filter(stream::Column::UserId.eq(current_user.id));
-
-    if let Some(status) = &params.status {
-        let s = match status.as_str() {
+    let status_filter = if let Some(status) = &params.status {
+        Some(match status.as_str() {
             "Pending" => stream::StreamStatus::Pending,
             "Live" => stream::StreamStatus::Live,
             "Ended" => stream::StreamStatus::Ended,
             "Error" => stream::StreamStatus::Error,
             _ => return Err(AppError::BadRequest("invalid status filter".to_string())),
-        };
-        query = query.filter(stream::Column::Status.eq(s));
-    }
+        })
+    } else {
+        None
+    };
 
-    let total = query.clone().count(&state.db).await?;
-    let total_pages = total.div_ceil(per_page);
-
-    let models = query
-        .order_by_desc(stream::Column::CreatedAt)
-        .paginate(&state.db, per_page)
-        .fetch_page(page - 1)
+    let result = state
+        .uow
+        .stream_repo()
+        .list_by_user(current_user.id, status_filter, page, per_page)
         .await?;
 
-    let data: Vec<StreamResponse> = models
+    let total_pages = result.total.div_ceil(per_page);
+
+    let data: Vec<StreamResponse> = result
+        .items
         .into_iter()
-        .map(|m| build_stream_response(m, &state.mediamtx_url))
+        .map(|m| build_stream_response(m, &state.config.mediamtx_url))
         .collect();
 
     Ok(Json(PaginatedResponse {
@@ -239,7 +229,7 @@ async fn list_streams(
         pagination: Pagination {
             page,
             per_page,
-            total,
+            total: result.total,
             total_pages,
         },
     }))
@@ -250,31 +240,15 @@ async fn get_stream(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<DataResponse<StreamResponse>>, AppError> {
-    let model = stream::Entity::find_by_id(id)
-        .one(&state.db)
+    let model = state
+        .uow
+        .stream_repo()
+        .find_by_id(id)
         .await?
         .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
 
-    let resp = build_stream_response(model, &state.mediamtx_url);
+    let resp = build_stream_response(model, &state.config.mediamtx_url);
     Ok(Json(DataResponse { data: resp }))
-}
-
-/// Helper to load stream and verify ownership.
-async fn load_owned_stream(
-    state: &AppState,
-    stream_id: Uuid,
-    user_id: Uuid,
-) -> Result<stream::Model, AppError> {
-    let model = stream::Entity::find_by_id(stream_id)
-        .one(&state.db)
-        .await?
-        .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
-
-    if model.user_id != Some(user_id) {
-        return Err(AppError::Forbidden("not the stream owner".to_string()));
-    }
-
-    Ok(model)
 }
 
 /// PATCH /v1/streams/:id — owner only
@@ -284,7 +258,17 @@ async fn update_stream(
     Path(id): Path<Uuid>,
     Json(payload): Json<UpdateStreamRequest>,
 ) -> Result<Json<DataResponse<StreamResponse>>, AppError> {
-    let _existing = load_owned_stream(&state, id, current_user.id).await?;
+    let txn = state.uow.begin().await?;
+
+    let existing = txn
+        .stream_repo()
+        .find_by_id_for_update(id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
+
+    if existing.user_id != Some(current_user.id) {
+        return Err(AppError::Forbidden("not the stream owner".to_string()));
+    }
 
     let mut active = stream::ActiveModel {
         id: Set(id),
@@ -294,8 +278,10 @@ async fn update_stream(
         active.title = Set(Some(title));
     }
 
-    let model = active.update(&state.db).await?;
-    let resp = build_stream_response(model, &state.mediamtx_url);
+    let model = txn.stream_repo().update(active).await?;
+    txn.commit().await?;
+
+    let resp = build_stream_response(model, &state.config.mediamtx_url);
     Ok(Json(DataResponse { data: resp }))
 }
 
@@ -305,13 +291,25 @@ async fn delete_stream(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    let existing = load_owned_stream(&state, id, current_user.id).await?;
+    let txn = state.uow.begin().await?;
+
+    let existing = txn
+        .stream_repo()
+        .find_by_id_for_update(id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
+
+    if existing.user_id != Some(current_user.id) {
+        return Err(AppError::Forbidden("not the stream owner".to_string()));
+    }
 
     if existing.status == stream::StreamStatus::Live {
         return Err(AppError::Conflict("STREAM_CANNOT_DELETE".to_string()));
     }
 
-    stream::Entity::delete_by_id(id).exec(&state.db).await?;
+    txn.stream_repo().delete(id).await?;
+    txn.commit().await?;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -321,7 +319,17 @@ async fn end_stream(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<DataResponse<StreamResponse>>, AppError> {
-    let existing = load_owned_stream(&state, id, current_user.id).await?;
+    let txn = state.uow.begin().await?;
+
+    let existing = txn
+        .stream_repo()
+        .find_by_id_for_update(id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
+
+    if existing.user_id != Some(current_user.id) {
+        return Err(AppError::Forbidden("not the stream owner".to_string()));
+    }
 
     if existing.status != stream::StreamStatus::Live {
         return Err(AppError::Conflict("STREAM_NOT_LIVE".to_string()));
@@ -334,8 +342,10 @@ async fn end_stream(
         ..Default::default()
     };
 
-    let model = active.update(&state.db).await?;
-    let resp = build_stream_response(model, &state.mediamtx_url);
+    let model = txn.stream_repo().update(active).await?;
+    txn.commit().await?;
+
+    let resp = build_stream_response(model, &state.config.mediamtx_url);
     Ok(Json(DataResponse { data: resp }))
 }
 
@@ -358,7 +368,17 @@ async fn create_stream_token(
         ));
     }
 
-    let existing = load_owned_stream(&state, id, current_user.id).await?;
+    let txn = state.uow.begin().await?;
+
+    let existing = txn
+        .stream_repo()
+        .find_by_id_for_update(id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
+
+    if existing.user_id != Some(current_user.id) {
+        return Err(AppError::Forbidden("not the stream owner".to_string()));
+    }
 
     // Generate raw token and its hash
     let raw_token = auth::token::generate_stream_token();
@@ -372,11 +392,12 @@ async fn create_stream_token(
         expires_at: Set(expires_at),
         created_at: Set(Utc::now()),
     };
-    token_active.insert(&state.db).await?;
+    txn.stream_token_repo().create(token_active).await?;
+    txn.commit().await?;
 
     let whip_url = format!(
         "{}/{}/whip?token={raw_token}",
-        state.mediamtx_url, existing.stream_key
+        state.config.mediamtx_url, existing.stream_key
     );
 
     Ok((
@@ -401,7 +422,7 @@ pub struct RecordingResponse {
     pub created_at: chrono::DateTime<Utc>,
 }
 
-fn build_recording_response(model: recording::Model) -> RecordingResponse {
+fn build_recording_response(model: entity::recording::Model) -> RecordingResponse {
     RecordingResponse {
         id: model.id,
         stream_id: model.stream_id,
@@ -425,34 +446,35 @@ async fn list_recordings(
     Query(params): Query<ListRecordingsQuery>,
 ) -> Result<Json<PaginatedResponse<RecordingResponse>>, AppError> {
     // Verify stream exists
-    let _stream = stream::Entity::find_by_id(id)
-        .one(&state.db)
+    state
+        .uow
+        .stream_repo()
+        .find_by_id(id)
         .await?
         .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
 
     let page = params.page.unwrap_or(1).max(1);
     let per_page = params.per_page.unwrap_or(20).min(100);
 
-    let query = recording::Entity::find()
-        .filter(recording::Column::StreamId.eq(id))
-        .order_by_desc(recording::Column::CreatedAt);
-
-    let total = query.clone().count(&state.db).await?;
-    let total_pages = total.div_ceil(per_page);
-
-    let models = query
-        .paginate(&state.db, per_page)
-        .fetch_page(page - 1)
+    let result = state
+        .uow
+        .recording_repo()
+        .list_by_stream(id, page, per_page)
         .await?;
+    let total_pages = result.total.div_ceil(per_page);
 
-    let data: Vec<RecordingResponse> = models.into_iter().map(build_recording_response).collect();
+    let data: Vec<RecordingResponse> = result
+        .items
+        .into_iter()
+        .map(build_recording_response)
+        .collect();
 
     Ok(Json(PaginatedResponse {
         data,
         pagination: Pagination {
             page,
             per_page,
-            total,
+            total: result.total,
             total_pages,
         },
     }))
@@ -470,4 +492,141 @@ pub fn stream_routes() -> Router<AppState> {
         .route("/v1/streams/{id}/end", post(end_stream))
         .route("/v1/streams/{id}/token", post(create_stream_token))
         .route("/v1/streams/{id}/recordings", get(list_recordings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use common::AppConfig;
+    use entity::user;
+    use http_body_util::BodyExt;
+    use repo::UnitOfWork;
+    use sea_orm::{DbBackend, MockDatabase, MockExecResult};
+    use tower::ServiceExt;
+
+    const JWT_SECRET: &str = "test-secret";
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            database_url: String::new(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            mediamtx_url: "http://localhost:9997".to_string(),
+            jwt_secret: JWT_SECRET.to_string(),
+            recordings_path: "/tmp/recordings".to_string(),
+        }
+    }
+
+    fn broadcaster_user() -> user::Model {
+        user::Model {
+            id: Uuid::new_v4(),
+            email: "broadcaster@example.com".to_string(),
+            password_hash: String::new(),
+            role: user::UserRole::Broadcaster,
+            created_at: Utc::now(),
+        }
+    }
+
+    fn viewer_user() -> user::Model {
+        user::Model {
+            id: Uuid::new_v4(),
+            email: "viewer@example.com".to_string(),
+            password_hash: String::new(),
+            role: user::UserRole::Viewer,
+            created_at: Utc::now(),
+        }
+    }
+
+    fn test_stream(user_id: Uuid) -> stream::Model {
+        let id = Uuid::new_v4();
+        stream::Model {
+            id,
+            user_id: Some(user_id),
+            stream_key: id.to_string(),
+            title: Some("Test Stream".to_string()),
+            status: stream::StreamStatus::Pending,
+            vod_status: stream::VodStatus::None,
+            started_at: None,
+            ended_at: None,
+            created_at: Utc::now(),
+            hls_url: None,
+        }
+    }
+
+    fn auth_header(user_id: Uuid) -> String {
+        let token = auth::jwt::sign_access_token(user_id, JWT_SECRET).unwrap();
+        format!("Bearer {token}")
+    }
+
+    async fn body_to_json(body: Body) -> serde_json::Value {
+        let bytes = body.collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn create_stream_success() {
+        let user = broadcaster_user();
+        let s = test_stream(user.id);
+
+        // Mock: auth middleware find_by_id, then txn create
+        let db = MockDatabase::new(DbBackend::Postgres)
+            .append_query_results([vec![user.clone()]]) // auth: find_by_id
+            .append_query_results([vec![s.clone()]]) // create stream
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }])
+            .into_connection();
+
+        let state = AppState {
+            uow: UnitOfWork::new(db),
+            config: test_config(),
+        };
+
+        let app = stream_routes().with_state(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/streams")
+            .header("content-type", "application/json")
+            .header("authorization", auth_header(user.id))
+            .body(Body::from(r#"{"title":"My Stream"}"#))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let json = body_to_json(resp.into_body()).await;
+        assert_eq!(json["data"]["title"], "Test Stream");
+    }
+
+    #[tokio::test]
+    async fn create_stream_viewer_forbidden() {
+        let user = viewer_user();
+
+        // Mock: auth middleware find_by_id
+        let db = MockDatabase::new(DbBackend::Postgres)
+            .append_query_results([vec![user.clone()]]) // auth: find_by_id
+            .into_connection();
+
+        let state = AppState {
+            uow: UnitOfWork::new(db),
+            config: test_config(),
+        };
+
+        let app = stream_routes().with_state(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/streams")
+            .header("content-type", "application/json")
+            .header("authorization", auth_header(user.id))
+            .body(Body::from(r#"{"title":"My Stream"}"#))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
 }

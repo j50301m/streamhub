@@ -5,7 +5,7 @@ use axum::{Json, Router};
 use chrono::Utc;
 use common::{AppError, AppState};
 use entity::user;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::Set;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -113,11 +113,10 @@ async fn register(
     }
     let role = parse_role(&payload.role)?;
 
-    // Check duplicate
-    let existing = user::Entity::find()
-        .filter(user::Column::Email.eq(&email))
-        .one(&state.db)
-        .await?;
+    // Use transaction with FOR UPDATE to prevent concurrent registration
+    let txn = state.uow.begin().await?;
+
+    let existing = txn.user_repo().find_by_email_for_update(&email).await?;
     if existing.is_some() {
         return Err(AppError::Conflict("USER_ALREADY_EXISTS".to_string()));
     }
@@ -135,12 +134,14 @@ async fn register(
         role: Set(role),
         created_at: Set(Utc::now()),
     };
-    let model = active.insert(&state.db).await?;
+    let model = txn.user_repo().create(active).await?;
+
+    txn.commit().await?;
 
     // Generate tokens
-    let access_token = auth::jwt::sign_access_token(model.id, &state.jwt_secret)
+    let access_token = auth::jwt::sign_access_token(model.id, &state.config.jwt_secret)
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let refresh_token = auth::jwt::sign_refresh_token(model.id, &state.jwt_secret)
+    let refresh_token = auth::jwt::sign_refresh_token(model.id, &state.config.jwt_secret)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let resp = AuthResponse {
@@ -160,18 +161,19 @@ async fn login(
 ) -> Result<Json<DataResponse<AuthResponse>>, AppError> {
     let email = payload.email.trim().to_lowercase();
 
-    let model = user::Entity::find()
-        .filter(user::Column::Email.eq(&email))
-        .one(&state.db)
+    let model = state
+        .uow
+        .user_repo()
+        .find_by_email(&email)
         .await?
         .ok_or_else(|| AppError::Unauthorized("INVALID_CREDENTIALS".to_string()))?;
 
     auth::password::verify_password(&payload.password, &model.password_hash)
         .map_err(|_| AppError::Unauthorized("INVALID_CREDENTIALS".to_string()))?;
 
-    let access_token = auth::jwt::sign_access_token(model.id, &state.jwt_secret)
+    let access_token = auth::jwt::sign_access_token(model.id, &state.config.jwt_secret)
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let refresh_token = auth::jwt::sign_refresh_token(model.id, &state.jwt_secret)
+    let refresh_token = auth::jwt::sign_refresh_token(model.id, &state.config.jwt_secret)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let resp = AuthResponse {
@@ -189,30 +191,31 @@ async fn refresh(
     State(state): State<AppState>,
     Json(payload): Json<RefreshRequest>,
 ) -> Result<Json<DataResponse<TokenResponse>>, AppError> {
-    let claims = auth::jwt::verify_token(&payload.refresh_token, &state.jwt_secret).map_err(
-        |e| match e {
+    let claims = auth::jwt::verify_token(&payload.refresh_token, &state.config.jwt_secret)
+        .map_err(|e| match e {
             auth::jwt::JwtError::Expired => {
                 AppError::Unauthorized("REFRESH_TOKEN_INVALID".to_string())
             }
             auth::jwt::JwtError::Invalid => {
                 AppError::Unauthorized("REFRESH_TOKEN_INVALID".to_string())
             }
-        },
-    )?;
+        })?;
 
     if claims.typ != "refresh" {
         return Err(AppError::Unauthorized("REFRESH_TOKEN_INVALID".to_string()));
     }
 
     // Verify user still exists
-    user::Entity::find_by_id(claims.sub)
-        .one(&state.db)
+    state
+        .uow
+        .user_repo()
+        .find_by_id(claims.sub)
         .await?
         .ok_or_else(|| AppError::Unauthorized("REFRESH_TOKEN_INVALID".to_string()))?;
 
-    let access_token = auth::jwt::sign_access_token(claims.sub, &state.jwt_secret)
+    let access_token = auth::jwt::sign_access_token(claims.sub, &state.config.jwt_secret)
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let new_refresh = auth::jwt::sign_refresh_token(claims.sub, &state.jwt_secret)
+    let new_refresh = auth::jwt::sign_refresh_token(claims.sub, &state.config.jwt_secret)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     Ok(Json(DataResponse {
@@ -236,8 +239,10 @@ async fn me(
     current_user: CurrentUser,
     State(state): State<AppState>,
 ) -> Result<Json<DataResponse<UserResponse>>, AppError> {
-    let model = user::Entity::find_by_id(current_user.id)
-        .one(&state.db)
+    let model = state
+        .uow
+        .user_repo()
+        .find_by_id(current_user.id)
         .await?
         .ok_or_else(|| AppError::NotFound("USER_NOT_FOUND".to_string()))?;
 
@@ -253,4 +258,216 @@ pub fn auth_routes() -> Router<AppState> {
         .route("/v1/auth/refresh", post(refresh))
         .route("/v1/auth/logout", post(logout))
         .route("/v1/me", get(me))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use common::AppConfig;
+    use http_body_util::BodyExt;
+    use repo::UnitOfWork;
+    use sea_orm::{DbBackend, MockDatabase, MockExecResult};
+    use tower::ServiceExt;
+
+    const JWT_SECRET: &str = "test-secret";
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            database_url: String::new(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            mediamtx_url: "http://localhost:9997".to_string(),
+            jwt_secret: JWT_SECRET.to_string(),
+            recordings_path: "/tmp/recordings".to_string(),
+        }
+    }
+
+    fn test_user() -> user::Model {
+        user::Model {
+            id: Uuid::new_v4(),
+            email: "test@example.com".to_string(),
+            password_hash: auth::password::hash_password("password123").unwrap(),
+            role: user::UserRole::Broadcaster,
+            created_at: Utc::now(),
+        }
+    }
+
+    async fn body_to_json(body: Body) -> serde_json::Value {
+        let bytes = body.collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn register_success() {
+        let user = test_user();
+        // Mock: find_by_email_for_update returns None (no existing user), then create returns user
+        let db = MockDatabase::new(DbBackend::Postgres)
+            .append_query_results::<user::Model, _, _>([vec![]]) // find_by_email_for_update: empty
+            .append_query_results([vec![user.clone()]]) // create: inserted user
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }])
+            .into_connection();
+
+        let state = AppState {
+            uow: UnitOfWork::new(db),
+            config: test_config(),
+        };
+
+        let app = auth_routes().with_state(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/auth/register")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&serde_json::json!({
+                    "email": "test@example.com",
+                    "password": "password123",
+                    "role": "broadcaster"
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let json = body_to_json(resp.into_body()).await;
+        assert!(json["data"]["access_token"].is_string());
+        assert!(json["data"]["user"]["email"].as_str().unwrap() == "test@example.com");
+    }
+
+    #[tokio::test]
+    async fn register_duplicate_email_returns_409() {
+        let user = test_user();
+        // Mock: find_by_email_for_update returns existing user
+        let db = MockDatabase::new(DbBackend::Postgres)
+            .append_query_results([vec![user.clone()]]) // find_by_email_for_update: found
+            .into_connection();
+
+        let state = AppState {
+            uow: UnitOfWork::new(db),
+            config: test_config(),
+        };
+
+        let app = auth_routes().with_state(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/auth/register")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&serde_json::json!({
+                    "email": "test@example.com",
+                    "password": "password123",
+                    "role": "broadcaster"
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn login_success() {
+        let user = test_user();
+        // Mock: find_by_email returns user
+        let db = MockDatabase::new(DbBackend::Postgres)
+            .append_query_results([vec![user.clone()]]) // find_by_email
+            .into_connection();
+
+        let state = AppState {
+            uow: UnitOfWork::new(db),
+            config: test_config(),
+        };
+
+        let app = auth_routes().with_state(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&serde_json::json!({
+                    "email": "test@example.com",
+                    "password": "password123"
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let json = body_to_json(resp.into_body()).await;
+        assert!(json["data"]["access_token"].is_string());
+    }
+
+    #[tokio::test]
+    async fn login_wrong_password_returns_401() {
+        let user = test_user();
+        let db = MockDatabase::new(DbBackend::Postgres)
+            .append_query_results([vec![user.clone()]])
+            .into_connection();
+
+        let state = AppState {
+            uow: UnitOfWork::new(db),
+            config: test_config(),
+        };
+
+        let app = auth_routes().with_state(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&serde_json::json!({
+                    "email": "test@example.com",
+                    "password": "wrongpassword"
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn login_user_not_found_returns_401() {
+        // Mock: find_by_email returns empty
+        let db = MockDatabase::new(DbBackend::Postgres)
+            .append_query_results::<user::Model, _, _>([vec![]])
+            .into_connection();
+
+        let state = AppState {
+            uow: UnitOfWork::new(db),
+            config: test_config(),
+        };
+
+        let app = auth_routes().with_state(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&serde_json::json!({
+                    "email": "noone@example.com",
+                    "password": "password123"
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
 }

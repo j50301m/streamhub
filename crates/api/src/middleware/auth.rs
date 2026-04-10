@@ -2,7 +2,6 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use common::{AppError, AppState};
 use entity::user;
-use sea_orm::EntityTrait;
 use uuid::Uuid;
 
 /// Authenticated user extracted from Bearer token.
@@ -36,17 +35,20 @@ impl FromRequestParts<AppState> for CurrentUser {
     ) -> Result<Self, Self::Rejection> {
         let token = extract_bearer_token(parts)?;
 
-        let claims = auth::jwt::verify_token(&token, &state.jwt_secret).map_err(|e| match e {
-            auth::jwt::JwtError::Expired => AppError::Unauthorized("TOKEN_EXPIRED".to_string()),
-            auth::jwt::JwtError::Invalid => AppError::Unauthorized("TOKEN_INVALID".to_string()),
-        })?;
+        let claims =
+            auth::jwt::verify_token(&token, &state.config.jwt_secret).map_err(|e| match e {
+                auth::jwt::JwtError::Expired => AppError::Unauthorized("TOKEN_EXPIRED".to_string()),
+                auth::jwt::JwtError::Invalid => AppError::Unauthorized("TOKEN_INVALID".to_string()),
+            })?;
 
         if claims.typ != "access" {
             return Err(AppError::Unauthorized("TOKEN_INVALID".to_string()));
         }
 
-        let user_model = user::Entity::find_by_id(claims.sub)
-            .one(&state.db)
+        let user_model = state
+            .uow
+            .user_repo()
+            .find_by_id(claims.sub)
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?
             .ok_or_else(|| AppError::Unauthorized("TOKEN_INVALID".to_string()))?;

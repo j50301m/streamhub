@@ -2,8 +2,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use common::AppState;
-use entity::{stream, stream_token};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use entity::stream;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -20,8 +19,8 @@ pub struct MediaMtxAuthRequest {
 
 /// POST /internal/auth
 /// MediaMTX HTTP auth callback.
-/// - action=publish → validate stream token from query param
-/// - action=read → check stream exists and is Live
+/// - action=publish -> validate stream token from query param
+/// - action=read -> check stream exists and is Live
 pub async fn mediamtx_auth(
     State(state): State<AppState>,
     Json(payload): Json<MediaMtxAuthRequest>,
@@ -51,11 +50,7 @@ async fn handle_publish_auth(state: &AppState, payload: &MediaMtxAuthRequest) ->
     };
 
     // Find the stream by path (stream_key)
-    let stream_model = match stream::Entity::find()
-        .filter(stream::Column::StreamKey.eq(&payload.path))
-        .one(&state.db)
-        .await
-    {
+    let stream_model = match state.uow.stream_repo().find_by_key(&payload.path).await {
         Ok(Some(s)) => s,
         Ok(None) => {
             tracing::warn!(path = %payload.path, "publish auth: stream not found");
@@ -70,10 +65,10 @@ async fn handle_publish_auth(state: &AppState, payload: &MediaMtxAuthRequest) ->
     // Hash the provided token and look it up
     let token_hash = auth::token::hash_token(&raw_token);
 
-    let token_record = match stream_token::Entity::find()
-        .filter(stream_token::Column::StreamId.eq(stream_model.id))
-        .filter(stream_token::Column::TokenHash.eq(&token_hash))
-        .one(&state.db)
+    let token_record = match state
+        .uow
+        .stream_token_repo()
+        .find_by_stream_and_hash(stream_model.id, &token_hash)
         .await
     {
         Ok(Some(t)) => t,
@@ -98,11 +93,7 @@ async fn handle_publish_auth(state: &AppState, payload: &MediaMtxAuthRequest) ->
 
 async fn handle_read_auth(state: &AppState, payload: &MediaMtxAuthRequest) -> StatusCode {
     // For read (WHEP/HLS), just check stream exists and is Live
-    match stream::Entity::find()
-        .filter(stream::Column::StreamKey.eq(&payload.path))
-        .one(&state.db)
-        .await
-    {
+    match state.uow.stream_repo().find_by_key(&payload.path).await {
         Ok(Some(s)) if s.status == stream::StreamStatus::Live => StatusCode::OK,
         Ok(Some(_)) => {
             tracing::info!(path = %payload.path, "read auth: stream not live");

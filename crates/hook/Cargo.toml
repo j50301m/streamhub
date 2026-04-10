@@ -11,9 +11,16 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 common = { workspace = true }
 entity = { workspace = true }
+repo = { workspace = true }
 auth = { workspace = true }
 transcoder = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+sea-orm = { workspace = true, features = ["mock"] }
+http-body-util = "0.1"
+tower = { workspace = true, features = ["util"] }
+serde_json = { workspace = true }
