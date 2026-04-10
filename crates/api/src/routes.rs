@@ -54,6 +54,10 @@ pub fn app_router() -> Router<AppState> {
             post(handlers::recording::recording_hook),
         )
         .route(
+            "/internal/hooks/transcoder-complete",
+            post(handlers::transcoder_webhook::transcoder_webhook),
+        )
+        .route(
             "/internal/auth",
             post(handlers::mediamtx_auth::mediamtx_auth),
         )

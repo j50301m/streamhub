@@ -16,11 +16,8 @@ pub trait ObjectStorage: Send + Sync {
     async fn upload_file(&self, local_path: &Path, key: &str) -> Result<String, StorageError>;
 
     /// Upload all files in a directory (non-recursive), returns list of keys.
-    async fn upload_dir(
-        &self,
-        local_dir: &Path,
-        prefix: &str,
-    ) -> Result<Vec<String>, StorageError>;
+    async fn upload_dir(&self, local_dir: &Path, prefix: &str)
+    -> Result<Vec<String>, StorageError>;
 
     /// Get the public URL for a storage key.
     fn public_url(&self, key: &str) -> String;
@@ -218,11 +215,7 @@ mod tests {
 
     #[async_trait]
     impl ObjectStorage for MockStorage {
-        async fn upload_file(
-            &self,
-            _local_path: &Path,
-            key: &str,
-        ) -> Result<String, StorageError> {
+        async fn upload_file(&self, _local_path: &Path, key: &str) -> Result<String, StorageError> {
             self.uploaded.lock().unwrap().push(key.to_string());
             Ok(key.to_string())
         }
