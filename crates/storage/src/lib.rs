@@ -27,6 +27,8 @@ pub trait ObjectStorage: Send + Sync {
 
 pub struct GcsStorage {
     store: object_store::gcp::GoogleCloudStorage,
+    bucket: String,
+    endpoint: Option<String>,
     public_base_url: String,
 }
 
@@ -63,8 +65,33 @@ impl GcsStorage {
 
         Ok(Self {
             store,
+            bucket: bucket.to_string(),
+            endpoint: endpoint.map(|s| s.to_string()),
             public_base_url,
         })
+    }
+
+    /// Ensure the bucket exists (for fake-gcs-server).
+    /// On real GCS this is a no-op since bucket should be pre-created.
+    pub async fn ensure_bucket(&self) -> Result<(), StorageError> {
+        if let Some(ep) = &self.endpoint {
+            let url = format!("{}/storage/v1/b", ep.trim_end_matches('/'));
+            let body = format!(r#"{{"name":"{}"}}"#, self.bucket);
+            let client = reqwest::Client::new();
+            let resp = client.post(&url)
+                .header("Content-Type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .map_err(|e| StorageError::Upload(e.to_string()))?;
+            if resp.status().is_success() || resp.status().as_u16() == 409 {
+                // 409 = bucket already exists, that's fine
+                tracing::info!(bucket = %self.bucket, "GCS bucket ensured");
+            } else {
+                tracing::warn!(bucket = %self.bucket, status = %resp.status(), "Failed to create bucket");
+            }
+        }
+        Ok(())
     }
 }
 
