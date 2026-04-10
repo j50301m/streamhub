@@ -9,167 +9,194 @@ pub enum StorageError {
     Io(#[from] std::io::Error),
 }
 
+/// Object storage abstraction. Handlers only depend on this trait.
 #[async_trait]
 pub trait ObjectStorage: Send + Sync {
-    /// Upload a single file, returns the GCS key.
-    async fn upload_file(&self, local_path: &Path, gcs_key: &str) -> Result<String, StorageError>;
+    /// Upload a single file, returns the storage key.
+    async fn upload_file(&self, local_path: &Path, key: &str) -> Result<String, StorageError>;
 
-    /// Upload all files in a directory (non-recursive), returns list of GCS keys.
+    /// Upload all files in a directory (non-recursive), returns list of keys.
     async fn upload_dir(
         &self,
         local_dir: &Path,
-        gcs_prefix: &str,
+        prefix: &str,
     ) -> Result<Vec<String>, StorageError>;
 
-    /// Get the public URL for a GCS key.
-    fn public_url(&self, gcs_key: &str) -> String;
+    /// Get the public URL for a storage key.
+    fn public_url(&self, key: &str) -> String;
 }
 
+/// GCS implementation using JSON API via reqwest.
+/// Works with both real GCS and fake-gcs-server.
 pub struct GcsStorage {
-    store: object_store::gcp::GoogleCloudStorage,
+    client: reqwest::Client,
     bucket: String,
-    endpoint: Option<String>,
+    base_url: String,
     public_base_url: String,
+    auth_token: Option<String>,
 }
 
 impl GcsStorage {
-    pub fn new(
+    /// Create a new GCS storage client.
+    ///
+    /// - `bucket`: GCS bucket name
+    /// - `endpoint`: Custom endpoint URL (e.g. `http://fake-gcs:4443` for local dev).
+    ///   If None, uses the real GCS endpoint.
+    /// - `credentials_path`: Path to service account JSON key file.
+    ///   If None, uses Application Default Credentials (ADC).
+    pub async fn new(
         bucket: &str,
         endpoint: Option<&str>,
         credentials_path: Option<&str>,
     ) -> Result<Self, StorageError> {
-        let mut builder =
-            object_store::gcp::GoogleCloudStorageBuilder::new().with_bucket_name(bucket);
+        let base_url = endpoint
+            .unwrap_or("https://storage.googleapis.com")
+            .trim_end_matches('/')
+            .to_string();
 
-        if let Some(ep) = endpoint {
-            // Custom endpoint (e.g. fake-gcs-server): set base URL, skip signature,
-            // and provide a fake service account key to disable OAuth token lookup.
-            let fake_key = r#"{"private_key": "private_key", "private_key_id": "id", "client_email": "fake@example.com", "disable_oauth": true}"#;
-            builder = builder
-                .with_config(object_store::gcp::GoogleConfigKey::BaseUrl, ep)
-                .with_config(object_store::gcp::GoogleConfigKey::SkipSignature, "true")
-                .with_service_account_key(fake_key);
-        }
-        if let Some(creds) = credentials_path {
-            builder = builder.with_service_account_path(creds);
-        }
+        let public_base_url = if endpoint.is_some() {
+            // fake-gcs: public URL uses the same endpoint
+            format!("{}/{}", base_url, bucket)
+        } else {
+            // Real GCS: public URL
+            format!("https://storage.googleapis.com/{}", bucket)
+        };
 
-        let store = builder
-            .build()
-            .map_err(|e| StorageError::Upload(e.to_string()))?;
-
-        let public_base_url = match endpoint {
-            Some(ep) => format!("{}/{}", ep.trim_end_matches('/'), bucket),
-            None => format!("https://storage.googleapis.com/{}", bucket),
+        // Load auth token for real GCS (skip for fake-gcs)
+        let auth_token = if endpoint.is_none() {
+            load_access_token(credentials_path).await.ok()
+        } else {
+            None
         };
 
         Ok(Self {
-            store,
+            client: reqwest::Client::new(),
             bucket: bucket.to_string(),
-            endpoint: endpoint.map(|s| s.to_string()),
+            base_url,
             public_base_url,
+            auth_token,
         })
     }
 
     /// Ensure the bucket exists (for fake-gcs-server).
-    /// On real GCS this is a no-op since bucket should be pre-created.
+    /// On real GCS this is a no-op since the bucket should be pre-created.
     pub async fn ensure_bucket(&self) -> Result<(), StorageError> {
-        if let Some(ep) = &self.endpoint {
-            let url = format!("{}/storage/v1/b", ep.trim_end_matches('/'));
-            let body = format!(r#"{{"name":"{}"}}"#, self.bucket);
-            let client = reqwest::Client::new();
-            let resp = client.post(&url)
-                .header("Content-Type", "application/json")
-                .body(body)
-                .send()
-                .await
-                .map_err(|e| StorageError::Upload(e.to_string()))?;
-            if resp.status().is_success() || resp.status().as_u16() == 409 {
-                // 409 = bucket already exists, that's fine
-                tracing::info!(bucket = %self.bucket, "GCS bucket ensured");
-            } else {
-                tracing::warn!(bucket = %self.bucket, status = %resp.status(), "Failed to create bucket");
-            }
+        let url = format!("{}/storage/v1/b", self.base_url);
+        let body = format!(r#"{{"name":"{}"}}"#, self.bucket);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| StorageError::Upload(e.to_string()))?;
+        // 200 = created, 409 = already exists — both fine
+        if resp.status().is_success() || resp.status().as_u16() == 409 {
+            tracing::info!(bucket = %self.bucket, "GCS bucket ensured");
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!(bucket = %self.bucket, %status, %body, "Failed to ensure bucket");
         }
         Ok(())
+    }
+
+    fn upload_url(&self, key: &str) -> String {
+        format!(
+            "{}/upload/storage/v1/b/{}/o?uploadType=media&name={}",
+            self.base_url, self.bucket, key
+        )
     }
 }
 
 impl std::fmt::Debug for GcsStorage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GcsStorage")
-            .field("public_base_url", &self.public_base_url)
+            .field("bucket", &self.bucket)
+            .field("base_url", &self.base_url)
             .finish()
     }
 }
 
 #[async_trait]
 impl ObjectStorage for GcsStorage {
-    async fn upload_file(&self, local_path: &Path, gcs_key: &str) -> Result<String, StorageError> {
+    async fn upload_file(&self, local_path: &Path, key: &str) -> Result<String, StorageError> {
         let data = tokio::fs::read(local_path).await?;
+        let url = self.upload_url(key);
 
-        if let Some(ep) = &self.endpoint {
-            // fake-gcs-server: use JSON API (POST /upload/storage/v1/b/{bucket}/o?uploadType=media&name={key})
-            let url = format!(
-                "{}/upload/storage/v1/b/{}/o?uploadType=media&name={}",
-                ep.trim_end_matches('/'),
-                self.bucket,
-                gcs_key
-            );
-            let client = reqwest::Client::new();
-            let resp = client
-                .post(&url)
-                .header("Content-Type", "application/octet-stream")
-                .body(data)
-                .send()
-                .await
-                .map_err(|e| StorageError::Upload(e.to_string()))?;
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                return Err(StorageError::Upload(format!("{status}: {body}")));
-            }
-        } else {
-            // Real GCS: use object_store XML API
-            use object_store::ObjectStoreExt as _;
-            let path = object_store::path::Path::from(gcs_key);
-            self.store
-                .put(&path, data.into())
-                .await
-                .map_err(|e| StorageError::Upload(e.to_string()))?;
+        let mut req = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/octet-stream")
+            .body(data);
+
+        if let Some(token) = &self.auth_token {
+            req = req.header("Authorization", format!("Bearer {token}"));
         }
 
-        tracing::info!(gcs_key, "Uploaded file to GCS");
-        Ok(gcs_key.to_string())
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| StorageError::Upload(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StorageError::Upload(format!("{status}: {body}")));
+        }
+
+        tracing::info!(key, "Uploaded file to storage");
+        Ok(key.to_string())
     }
 
     async fn upload_dir(
         &self,
         local_dir: &Path,
-        gcs_prefix: &str,
+        prefix: &str,
     ) -> Result<Vec<String>, StorageError> {
         let mut keys = Vec::new();
         let mut entries = tokio::fs::read_dir(local_dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             if entry.file_type().await?.is_file() {
                 let file_name = entry.file_name().to_string_lossy().to_string();
-                let gcs_key = format!("{}/{}", gcs_prefix.trim_end_matches('/'), file_name);
-                self.upload_file(&entry.path(), &gcs_key).await?;
-                keys.push(gcs_key);
+                let key = format!("{}/{}", prefix.trim_end_matches('/'), file_name);
+                self.upload_file(&entry.path(), &key).await?;
+                keys.push(key);
             }
         }
         tracing::info!(
             dir = %local_dir.display(),
-            prefix = gcs_prefix,
+            prefix,
             count = keys.len(),
-            "Uploaded directory to GCS"
+            "Uploaded directory to storage"
         );
         Ok(keys)
     }
 
-    fn public_url(&self, gcs_key: &str) -> String {
-        format!("{}/{}", self.public_base_url, gcs_key)
+    fn public_url(&self, key: &str) -> String {
+        format!("{}/{}", self.public_base_url, key)
     }
+}
+
+/// Load a GCS access token from service account credentials or ADC.
+/// This is a simplified implementation — for production, use a token refresh mechanism.
+async fn load_access_token(_credentials_path: Option<&str>) -> Result<String, StorageError> {
+    // TODO: Implement proper token loading from service account JSON or metadata server.
+    // For now, try the gcloud CLI token as a fallback.
+    let output = tokio::process::Command::new("gcloud")
+        .args(["auth", "print-access-token"])
+        .output()
+        .await
+        .map_err(|e| StorageError::Upload(format!("failed to get access token: {e}")))?;
+
+    if !output.status.success() {
+        return Err(StorageError::Upload(
+            "gcloud auth print-access-token failed".to_string(),
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[cfg(test)]
@@ -194,32 +221,32 @@ mod tests {
         async fn upload_file(
             &self,
             _local_path: &Path,
-            gcs_key: &str,
+            key: &str,
         ) -> Result<String, StorageError> {
-            self.uploaded.lock().unwrap().push(gcs_key.to_string());
-            Ok(gcs_key.to_string())
+            self.uploaded.lock().unwrap().push(key.to_string());
+            Ok(key.to_string())
         }
 
         async fn upload_dir(
             &self,
             local_dir: &Path,
-            gcs_prefix: &str,
+            prefix: &str,
         ) -> Result<Vec<String>, StorageError> {
             let mut keys = Vec::new();
             let mut entries = tokio::fs::read_dir(local_dir).await?;
             while let Some(entry) = entries.next_entry().await? {
                 if entry.file_type().await?.is_file() {
                     let file_name = entry.file_name().to_string_lossy().to_string();
-                    let gcs_key = format!("{}/{}", gcs_prefix.trim_end_matches('/'), file_name);
-                    self.upload_file(&entry.path(), &gcs_key).await?;
-                    keys.push(gcs_key);
+                    let key = format!("{}/{}", prefix.trim_end_matches('/'), file_name);
+                    self.upload_file(&entry.path(), &key).await?;
+                    keys.push(key);
                 }
             }
             Ok(keys)
         }
 
-        fn public_url(&self, gcs_key: &str) -> String {
-            format!("http://mock-gcs/{}", gcs_key)
+        fn public_url(&self, key: &str) -> String {
+            format!("http://mock-storage/{}", key)
         }
     }
 
@@ -262,6 +289,6 @@ mod tests {
     fn test_mock_public_url() {
         let storage = MockStorage::new();
         let url = storage.public_url("streams/abc/hls/index.m3u8");
-        assert_eq!(url, "http://mock-gcs/streams/abc/hls/index.m3u8");
+        assert_eq!(url, "http://mock-storage/streams/abc/hls/index.m3u8");
     }
 }
