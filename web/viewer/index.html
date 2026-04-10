@@ -166,13 +166,16 @@
             stopWatching();
             document.getElementById('stream-key').value = streamKey;
 
-            // Build absolute VOD URL from hls_url (which is like /vod/{key}/hls/index.m3u8)
-            var loc = window.location;
+            // hls_url is either a full URL (https://storage.googleapis.com/...)
+            // or a relative path (/gcs/...). If relative, prepend origin.
             var fullUrl;
-            if (loc.protocol === 'http:' || loc.protocol === 'https:') {
-                fullUrl = loc.origin + hlsUrl;
+            if (hlsUrl.startsWith('http')) {
+                fullUrl = hlsUrl;
             } else {
-                fullUrl = 'http://localhost:3000' + hlsUrl;
+                var loc = window.location;
+                fullUrl = (loc.protocol === 'http:' || loc.protocol === 'https:')
+                    ? loc.origin + hlsUrl
+                    : 'http://localhost:3000' + hlsUrl;
             }
 
             var video = document.getElementById('player');

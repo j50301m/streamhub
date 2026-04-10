@@ -55,8 +55,8 @@ impl GcsStorage {
             .to_string();
 
         let public_base_url = if endpoint.is_some() {
-            // fake-gcs: public URL uses the same endpoint
-            format!("{}/{}", base_url, bucket)
+            // Local dev: serve via nginx /gcs/ proxy
+            format!("/gcs/{}", bucket)
         } else {
             // Real GCS: public URL
             format!("https://storage.googleapis.com/{}", bucket)
