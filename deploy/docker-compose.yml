@@ -28,6 +28,9 @@ services:
       MEDIAMTX_URL: http://mediamtx:9997
       HOST: 0.0.0.0
       PORT: 8080
+      STORAGE_ENABLED: "true"
+      GCS_BUCKET: streamhub-recordings-dev
+      GCS_ENDPOINT: http://fake-gcs:4443/storage/v1/
     ports:
       - "8080:8080"
     volumes:
@@ -35,6 +38,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      fake-gcs:
+        condition: service_started
 
   mediamtx:
     build:
@@ -57,6 +62,15 @@ services:
       postgres:
         condition: service_healthy
 
+  fake-gcs:
+    image: fsouza/fake-gcs-server
+    container_name: streamhub-fake-gcs
+    ports:
+      - "4443:4443"
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "localhost:4443"]
+    volumes:
+      - gcs-data:/storage
+
   web:
     build:
       context: ..
@@ -74,3 +88,4 @@ services:
 
 volumes:
   pgdata:
+  gcs-data:

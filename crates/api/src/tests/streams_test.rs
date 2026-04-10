@@ -74,6 +74,7 @@ async fn create_stream_success() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let req = Request::builder()
@@ -103,6 +104,7 @@ async fn create_stream_viewer_forbidden() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
+        storage: None,
     };
 
     let req = Request::builder()

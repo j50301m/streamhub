@@ -24,4 +24,38 @@ pub struct AppConfig {
     /// In Docker, MediaMTX writes to /recordings; on host, this maps to ./recordings.
     #[env("RECORDINGS_PATH", default = "./recordings")]
     pub recordings_path: String,
+
+    #[env("STORAGE_ENABLED", default = "false")]
+    pub storage_enabled: String,
+
+    #[env("GCS_BUCKET", default = "streamhub-recordings-dev")]
+    pub gcs_bucket: String,
+
+    #[env("GCS_ENDPOINT", default = "")]
+    pub gcs_endpoint: String,
+
+    #[env("GCS_CREDENTIALS_PATH", default = "")]
+    pub gcs_credentials_path: String,
+}
+
+impl AppConfig {
+    pub fn storage_enabled(&self) -> bool {
+        self.storage_enabled.eq_ignore_ascii_case("true") || self.storage_enabled == "1"
+    }
+
+    pub fn gcs_endpoint_opt(&self) -> Option<&str> {
+        if self.gcs_endpoint.is_empty() {
+            None
+        } else {
+            Some(&self.gcs_endpoint)
+        }
+    }
+
+    pub fn gcs_credentials_path_opt(&self) -> Option<&str> {
+        if self.gcs_credentials_path.is_empty() {
+            None
+        } else {
+            Some(&self.gcs_credentials_path)
+        }
+    }
 }

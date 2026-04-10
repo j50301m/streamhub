@@ -16,6 +16,10 @@ fn test_config() -> AppConfig {
         mediamtx_url: "http://localhost:9997".to_string(),
         jwt_secret: JWT_SECRET.to_string(),
         recordings_path: "/tmp/recordings".to_string(),
+        storage_enabled: "false".to_string(),
+        gcs_bucket: "test-bucket".to_string(),
+        gcs_endpoint: String::new(),
+        gcs_credentials_path: String::new(),
     }
 }
 

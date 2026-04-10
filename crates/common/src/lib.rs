@@ -6,13 +6,16 @@ pub use error::AppError;
 
 use repo::UnitOfWork;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
+use std::sync::Arc;
 use std::time::Duration;
+use storage::ObjectStorage;
 
 /// Shared application state passed to all route handlers.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     pub uow: UnitOfWork,
     pub config: AppConfig,
+    pub storage: Option<Arc<dyn ObjectStorage>>,
 }
 
 /// Initialize database connection pool with statement_timeout.

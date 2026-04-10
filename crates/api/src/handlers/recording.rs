@@ -7,6 +7,8 @@ use entity::{recording, stream};
 use sea_orm::Set;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use storage::ObjectStorage;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -119,9 +121,12 @@ pub(crate) async fn recording_hook(
     if should_transcode {
         let uow = state.uow.clone();
         let recordings_path = state.config.recordings_path.clone();
+        let storage = state.storage.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = run_transcode(uow, &recordings_path, stream_id, &stream_key).await {
+            if let Err(e) =
+                run_transcode(uow, &recordings_path, stream_id, &stream_key, storage).await
+            {
                 tracing::error!(stream_id = %stream_id, error = %e, "Transcode task failed");
             }
         });
@@ -131,12 +136,13 @@ pub(crate) async fn recording_hook(
 }
 
 /// Find the latest MP4 recording for a stream, transcode it to HLS,
-/// and update the stream's vod_status + hls_url.
+/// optionally upload to GCS, and update the stream's vod_status + hls_url.
 async fn run_transcode(
     uow: repo::UnitOfWork,
     recordings_path: &str,
     stream_id: Uuid,
     stream_key: &str,
+    storage: Option<Arc<dyn ObjectStorage>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let latest_recording = uow
         .recording_repo()
@@ -156,7 +162,21 @@ async fn run_transcode(
 
     match transcoder::transcode_to_hls(&input_mp4, &output_dir).await {
         Ok(_) => {
-            let hls_url = format!("/vod/{stream_key}/hls/index.m3u8");
+            let hls_url = if let Some(ref store) = storage {
+                // Upload HLS directory to GCS
+                let gcs_prefix = format!("streams/{}/hls", stream_key);
+                store
+                    .upload_dir(&output_dir, &gcs_prefix)
+                    .await
+                    .map_err(|e| format!("GCS upload failed: {e}"))?;
+
+                let url = store.public_url(&format!("{}/index.m3u8", gcs_prefix));
+                tracing::info!(stream_id = %stream_id, %url, "HLS uploaded to GCS");
+                url
+            } else {
+                format!("/vod/{stream_key}/hls/index.m3u8")
+            };
+
             let active = stream::ActiveModel {
                 id: Set(stream_id),
                 vod_status: Set(stream::VodStatus::Ready),
@@ -165,6 +185,19 @@ async fn run_transcode(
             };
             uow.stream_repo().update(active).await?;
             tracing::info!(stream_id = %stream_id, %hls_url, "VOD transcode completed");
+
+            // Clean up local HLS files after successful GCS upload
+            if storage.is_some() {
+                if let Err(e) = tokio::fs::remove_dir_all(&output_dir).await {
+                    tracing::warn!(
+                        path = %output_dir.display(),
+                        error = %e,
+                        "Failed to clean up local HLS directory"
+                    );
+                } else {
+                    tracing::info!(path = %output_dir.display(), "Cleaned up local HLS directory");
+                }
+            }
         }
         Err(e) => {
             tracing::error!(stream_id = %stream_id, error = %e, "VOD transcode failed");
