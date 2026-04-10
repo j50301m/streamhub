@@ -1,0 +1,12 @@
+[package]
+name = "repo"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sea-orm = { workspace = true }
+entity = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }

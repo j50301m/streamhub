@@ -27,6 +27,9 @@ pub enum AppError {
 
     #[error("Database error: {0}")]
     Database(#[from] sea_orm::DbErr),
+
+    #[error("Repository error: {0}")]
+    Repo(#[from] repo::RepoError),
 }
 
 #[derive(Serialize)]
@@ -51,6 +54,7 @@ impl AppError {
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Repo(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
@@ -64,6 +68,7 @@ impl AppError {
             AppError::Validation(_) => "VALIDATION_ERROR",
             AppError::Internal(_) => "INTERNAL_ERROR",
             AppError::Database(_) => "INTERNAL_ERROR",
+            AppError::Repo(_) => "INTERNAL_ERROR",
         }
     }
 }

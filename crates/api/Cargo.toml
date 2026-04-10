@@ -24,5 +24,11 @@ anyhow = { workspace = true }
 cfgloader_rs = { workspace = true }
 common = { workspace = true }
 entity = { workspace = true }
+repo = { workspace = true }
 hook = { workspace = true }
 auth = { workspace = true }
+
+[dev-dependencies]
+sea-orm = { workspace = true, features = ["mock"] }
+http-body-util = "0.1"
+tower = { workspace = true, features = ["util"] }
