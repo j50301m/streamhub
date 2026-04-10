@@ -40,7 +40,9 @@ impl GcsStorage {
             object_store::gcp::GoogleCloudStorageBuilder::new().with_bucket_name(bucket);
 
         if let Some(ep) = endpoint {
-            builder = builder.with_url(ep);
+            builder = builder
+                .with_config(object_store::gcp::GoogleConfigKey::BaseUrl, ep)
+                .with_config(object_store::gcp::GoogleConfigKey::SkipSignature, "true");
         }
         if let Some(creds) = credentials_path {
             builder = builder.with_service_account_path(creds);
