@@ -1,0 +1,57 @@
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: streamhub-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  tempo:
+    image: grafana/tempo:latest
+    container_name: streamhub-tempo
+    ports:
+      - "4317:4317"
+      - "3200:3200"
+    command: ["-config.file=/etc/tempo.yml"]
+    volumes:
+      - ./tempo.yml:/etc/tempo.yml:ro
+
+  loki:
+    image: grafana/loki:latest
+    container_name: streamhub-loki
+    ports:
+      - "3100:3100"
+    command: ["-config.file=/etc/loki.yml"]
+    volumes:
+      - ./loki.yml:/etc/loki.yml:ro
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: streamhub-promtail
+    volumes:
+      - ./promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: ["-config.file=/etc/promtail/config.yml"]
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: streamhub-node-exporter
+    ports:
+      - "9100:9100"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: streamhub-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+networks:
+  default:
+    name: streamhub

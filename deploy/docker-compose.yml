@@ -79,3 +79,7 @@ services:
 
 volumes:
   pgdata:
+
+networks:
+  default:
+    name: streamhub
