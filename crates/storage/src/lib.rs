@@ -73,7 +73,7 @@ impl std::fmt::Debug for GcsStorage {
 #[async_trait]
 impl ObjectStorage for GcsStorage {
     async fn upload_file(&self, local_path: &Path, gcs_key: &str) -> Result<String, StorageError> {
-        use object_store::ObjectStore;
+        use object_store::ObjectStoreExt as _;
 
         let data = tokio::fs::read(local_path).await?;
         let path = object_store::path::Path::from(gcs_key);
