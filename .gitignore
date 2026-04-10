@@ -29,6 +29,9 @@ deploy/recordings/*
 # SSL certificates (self-signed, local dev)
 deploy/ssl/
 
+# Fake GCS server data (local dev)
+deploy/gcs-data/
+
 # Claude setting
 .claude/*
 CLAUDE.md

@@ -69,7 +69,7 @@ services:
       - "4443:4443"
     command: ["-scheme", "http", "-port", "4443", "-public-host", "localhost:4443"]
     volumes:
-      - gcs-data:/storage
+      - ./gcs-data:/storage
 
   web:
     build:
@@ -88,4 +88,3 @@ services:
 
 volumes:
   pgdata:
-  gcs-data:
