@@ -78,7 +78,9 @@ fn init_telemetry(otel_endpoint: &str) -> Result<PrometheusHandle> {
         )
         .build();
 
-    let tracer = provider.tracer("streamhub-api");
+    // Set as global provider, then get tracer from global
+    opentelemetry::global::set_tracer_provider(provider);
+    let tracer = opentelemetry::global::tracer("streamhub-api");
 
     let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
         .install_recorder()
