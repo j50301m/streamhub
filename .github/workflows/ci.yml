@@ -76,7 +76,7 @@ jobs:
             dockerfile: deploy/services/Dockerfile.web
     steps:
       - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build ${{ matrix.name }} image
         uses: docker/build-push-action@v6
         with:
