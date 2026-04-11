@@ -14,7 +14,7 @@ scrape_configs:
         refresh_interval: 5s
         filters:
           - name: label
-            values: ["com.docker.compose.project=deploy"]
+            values: ["com.docker.compose.project=services"]
     relabel_configs:
       - source_labels: ['__meta_docker_container_name']
         target_label: 'container'
