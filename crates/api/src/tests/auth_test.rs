@@ -41,6 +41,7 @@ async fn register_success() {
         uow: UnitOfWork::new(db),
         config: test_config(),
         storage: None,
+        metrics: super::test_metrics(),
     };
 
     let req = Request::builder()
@@ -76,6 +77,7 @@ async fn register_duplicate_email_returns_409() {
         uow: UnitOfWork::new(db),
         config: test_config(),
         storage: None,
+        metrics: super::test_metrics(),
     };
 
     let req = Request::builder()
@@ -107,6 +109,7 @@ async fn login_success() {
         uow: UnitOfWork::new(db),
         config: test_config(),
         storage: None,
+        metrics: super::test_metrics(),
     };
 
     let req = Request::builder()
@@ -140,6 +143,7 @@ async fn login_wrong_password_returns_401() {
         uow: UnitOfWork::new(db),
         config: test_config(),
         storage: None,
+        metrics: super::test_metrics(),
     };
 
     let req = Request::builder()
@@ -169,6 +173,7 @@ async fn login_user_not_found_returns_401() {
         uow: UnitOfWork::new(db),
         config: test_config(),
         storage: None,
+        metrics: super::test_metrics(),
     };
 
     let _ = JWT_SECRET; // suppress unused warning

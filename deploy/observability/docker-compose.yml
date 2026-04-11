@@ -3,15 +3,15 @@ services:
     image: prom/prometheus:latest
     container_name: streamhub-prometheus
     ports:
-      - "9090:9090"
+      - "9091:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
 
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:2.7.1
     container_name: streamhub-tempo
     ports:
-      - "4317:4317"
+      - "4319:4317"
       - "3200:3200"
     command: ["-config.file=/etc/tempo.yml"]
     volumes:
@@ -55,3 +55,4 @@ services:
 networks:
   default:
     name: streamhub
+    external: true

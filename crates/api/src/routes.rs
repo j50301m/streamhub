@@ -11,8 +11,9 @@ async fn healthz() -> axum::Json<Value> {
 
 pub fn app_router() -> Router<AppState> {
     Router::new()
-        // Health
+        // Health & Metrics
         .route("/healthz", get(healthz))
+        .route("/metrics", get(handlers::metrics::metrics_handler))
         // Auth
         .route("/v1/auth/register", post(handlers::auth::register))
         .route("/v1/auth/login", post(handlers::auth::login))

@@ -1,0 +1,121 @@
+use anyhow::Result;
+use axum::Router;
+use cfgloader_rs::FromEnv;
+use common::{AppConfig, AppState};
+use metrics_exporter_prometheus::PrometheusHandle;
+use opentelemetry::trace::TracerProvider;
+use opentelemetry_otlp::WithExportConfig;
+use repo::UnitOfWork;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use storage::GcsStorage;
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
+use crate::middleware;
+use crate::routes;
+
+pub struct App {
+    router: Router,
+    addr: SocketAddr,
+}
+
+impl App {
+    pub async fn init() -> Result<Self> {
+        let config = AppConfig::load_iter([
+            std::path::Path::new(".env.local"),
+            std::path::Path::new(".env"),
+        ])
+        .expect("failed to load config");
+
+        let prometheus_handle = init_telemetry(&config.otel_endpoint)?;
+        let db = init_db(&config).await?;
+        let storage = init_storage(&config).await?;
+        let addr = SocketAddr::new(config.host.parse()?, config.port);
+
+        let state = AppState {
+            uow: UnitOfWork::new(db),
+            config,
+            storage,
+            metrics: prometheus_handle,
+        };
+
+        let router = Router::new()
+            .merge(routes::app_router())
+            .layer(axum::middleware::from_fn(
+                middleware::metrics::track_metrics,
+            ))
+            .layer(CorsLayer::permissive())
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        Ok(Self { router, addr })
+    }
+
+    pub async fn run(self) -> Result<()> {
+        tracing::info!("Starting server on {}", self.addr);
+        let listener = tokio::net::TcpListener::bind(self.addr).await?;
+        axum::serve(listener, self.router).await?;
+        Ok(())
+    }
+}
+
+fn init_telemetry(otel_endpoint: &str) -> Result<PrometheusHandle> {
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(otel_endpoint)
+        .build()?;
+
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
+        .with_resource(
+            opentelemetry_sdk::Resource::builder()
+                .with_service_name("streamhub-api")
+                .build(),
+        )
+        .build();
+
+    let tracer = provider.tracer("streamhub-api");
+
+    let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .install_recorder()
+        .expect("failed to install Prometheus recorder");
+
+    tracing_subscriber::registry()
+        .with(tracing_opentelemetry::layer().with_tracer(tracer))
+        .with(tracing_subscriber::fmt::layer().json())
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .init();
+
+    Ok(prometheus_handle)
+}
+
+async fn init_db(config: &AppConfig) -> Result<sea_orm::DatabaseConnection> {
+    tracing::info!("Connecting to database...");
+    let db = common::init_db(&config.database_url).await?;
+
+    tracing::info!("Syncing database schema from entities...");
+    db.get_schema_registry("entity::*").sync(&db).await?;
+
+    Ok(db)
+}
+
+async fn init_storage(config: &AppConfig) -> Result<Option<Arc<dyn storage::ObjectStorage>>> {
+    if config.storage_enabled() {
+        let gcs = GcsStorage::new(
+            &config.gcs_bucket,
+            config.gcs_endpoint_opt(),
+            config.gcs_credentials_path_opt(),
+        )
+        .await?;
+        gcs.ensure_bucket().await?;
+        tracing::info!(bucket = %config.gcs_bucket, "GCS storage enabled");
+        Ok(Some(Arc::new(gcs)))
+    } else {
+        tracing::info!("GCS storage disabled, using local file serving");
+        Ok(None)
+    }
+}

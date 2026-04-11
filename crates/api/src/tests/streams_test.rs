@@ -75,6 +75,7 @@ async fn create_stream_success() {
         uow: UnitOfWork::new(db),
         config: test_config(),
         storage: None,
+        metrics: super::test_metrics(),
     };
 
     let req = Request::builder()
@@ -105,6 +106,7 @@ async fn create_stream_viewer_forbidden() {
         uow: UnitOfWork::new(db),
         config: test_config(),
         storage: None,
+        metrics: super::test_metrics(),
     };
 
     let req = Request::builder()
