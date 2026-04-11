@@ -1,10 +1,8 @@
-use rand::Rng;
 use sha2::{Digest, Sha256};
 
 /// Generate a random stream token (32 bytes, hex-encoded = 64 chars).
 pub fn generate_stream_token() -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: [u8; 32] = rng.r#gen();
+    let bytes: [u8; 32] = rand::random();
     hex_encode(&bytes)
 }
 
