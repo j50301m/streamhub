@@ -29,3 +29,4 @@ deploy/services/ssl/
 # Claude setting
 .claude/*
 CLAUDE.md
+docs/
