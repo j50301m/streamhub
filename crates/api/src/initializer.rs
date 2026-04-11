@@ -95,7 +95,8 @@ fn init_telemetry(otel_endpoint: &str) -> Result<PrometheusHandle> {
 
     tracing_subscriber::registry()
         .with(tracing_opentelemetry::layer().with_tracer(tracer))
-        .with(tracing_subscriber::fmt::layer().json())
+        .with(crate::log_format::SpanFieldsLayer)
+        .with(tracing_subscriber::fmt::layer().event_format(crate::log_format::JsonWithTraceId))
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 

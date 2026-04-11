@@ -118,6 +118,7 @@ impl std::fmt::Debug for GcsStorage {
 
 #[async_trait]
 impl ObjectStorage for GcsStorage {
+    #[tracing::instrument(skip(self), fields(bucket = %self.bucket, %key))]
     async fn upload_file(&self, local_path: &Path, key: &str) -> Result<String, StorageError> {
         let data = tokio::fs::read(local_path).await?;
         let url = self.upload_url(key);
@@ -147,6 +148,7 @@ impl ObjectStorage for GcsStorage {
         Ok(key.to_string())
     }
 
+    #[tracing::instrument(skip(self), fields(bucket = %self.bucket, %prefix))]
     async fn upload_dir(
         &self,
         local_dir: &Path,

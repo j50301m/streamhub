@@ -77,6 +77,7 @@ fn user_to_response(model: &user::Model) -> UserResponse {
 // ── Handlers ───────────────────────────────────────────────────────
 
 /// POST /v1/auth/register
+#[tracing::instrument(skip(state, payload), fields(email = %payload.email))]
 pub(crate) async fn register(
     State(state): State<AppState>,
     AppJson(payload): AppJson<RegisterRequest>,
@@ -142,6 +143,7 @@ pub(crate) async fn register(
 }
 
 /// POST /v1/auth/login
+#[tracing::instrument(skip(state, payload), fields(email = %payload.email))]
 pub(crate) async fn login(
     State(state): State<AppState>,
     AppJson(payload): AppJson<LoginRequest>,
@@ -174,6 +176,7 @@ pub(crate) async fn login(
 }
 
 /// POST /v1/auth/refresh
+#[tracing::instrument(skip(state, payload))]
 pub(crate) async fn refresh(
     State(state): State<AppState>,
     AppJson(payload): AppJson<RefreshRequest>,
@@ -215,6 +218,7 @@ pub(crate) async fn refresh(
 }
 
 /// POST /v1/auth/logout
+#[tracing::instrument(skip(_current_user, _payload))]
 pub(crate) async fn logout(
     _current_user: CurrentUser,
     Json(_payload): Json<LogoutRequest>,
@@ -223,6 +227,7 @@ pub(crate) async fn logout(
 }
 
 /// GET /v1/me
+#[tracing::instrument(skip(state), fields(user_id = %current_user.id))]
 pub(crate) async fn me(
     current_user: CurrentUser,
     State(state): State<AppState>,

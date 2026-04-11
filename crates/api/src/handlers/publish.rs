@@ -19,6 +19,7 @@ pub struct PublishHookPayload {
 
 /// POST /internal/hooks/publish
 /// Called by MediaMTX on publish/unpublish events.
+#[tracing::instrument(skip(state, payload), fields(stream_key = %payload.stream_key, action = %payload.action))]
 pub(crate) async fn publish_hook(
     State(state): State<AppState>,
     Json(payload): Json<PublishHookPayload>,
@@ -110,6 +111,7 @@ pub(crate) async fn publish_hook(
 }
 
 /// Scan filesystem for MP4 recordings, transcode to HLS, optionally upload to GCS.
+#[tracing::instrument(skip(uow, recordings_path, storage, config), fields(%stream_id, %stream_key))]
 async fn run_transcode(
     uow: repo::UnitOfWork,
     recordings_path: &str,
@@ -193,6 +195,7 @@ async fn scan_mp4_files(
 }
 
 /// Local ffmpeg transcode + optional GCS upload.
+#[tracing::instrument(skip(uow, storage), fields(%stream_id, %stream_key))]
 async fn run_transcode_local(
     uow: &repo::UnitOfWork,
     stream_id: Uuid,
@@ -239,6 +242,7 @@ async fn run_transcode_local(
 }
 
 /// GCP Transcoder API path: upload MP4 to GCS, create transcoder job.
+#[tracing::instrument(skip(uow, storage, config), fields(%stream_id, %stream_key))]
 async fn run_transcode_gcp(
     uow: &repo::UnitOfWork,
     stream_id: Uuid,

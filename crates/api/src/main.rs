@@ -3,6 +3,7 @@ use anyhow::Result;
 pub mod extractors;
 pub mod handlers;
 mod initializer;
+mod log_format;
 pub mod middleware;
 mod routes;
 
