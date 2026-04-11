@@ -57,6 +57,63 @@ pub async fn transcode_to_hls(
     Ok(output_m3u8)
 }
 
+/// Concatenate multiple MP4 files into a single MP4 using ffmpeg concat demuxer.
+/// Returns the path to the combined output file.
+pub async fn concat_mp4(
+    input_files: &[PathBuf],
+    output_path: &Path,
+) -> Result<PathBuf, TranscoderError> {
+    if input_files.len() == 1 {
+        // Single file, no concat needed — just return the path
+        return Ok(input_files[0].clone());
+    }
+
+    // Write concat filelist
+    let filelist_path = output_path
+        .parent()
+        .unwrap_or(Path::new("/tmp"))
+        .join("concat_list.txt");
+    let filelist_content: String = input_files
+        .iter()
+        .map(|f| format!("file '{}'\n", f.display()))
+        .collect();
+    tokio::fs::write(&filelist_path, &filelist_content).await?;
+
+    tracing::info!(
+        files = input_files.len(),
+        output = %output_path.display(),
+        "Concatenating MP4 files"
+    );
+
+    let output = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            filelist_path.to_str().unwrap_or_default(),
+            "-c",
+            "copy",
+            output_path.to_str().unwrap_or_default(),
+        ])
+        .output()
+        .await?;
+
+    // Clean up filelist
+    let _ = tokio::fs::remove_file(&filelist_path).await;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        tracing::error!(%stderr, "ffmpeg concat failed");
+        return Err(TranscoderError::FfmpegFailed(stderr));
+    }
+
+    tracing::info!(output = %output_path.display(), "MP4 concat completed");
+    Ok(output_path.to_path_buf())
+}
+
 /// Create a GCP Transcoder API job to transcode an MP4 into multi-resolution ABR HLS.
 ///
 /// Returns the job name (e.g. `projects/{p}/locations/{l}/jobs/{id}`).
