@@ -1,6 +1,6 @@
 # SPEC-012 監控與可觀測性
 
-狀態：in-progress
+狀態：done
 
 ## 目標
 
