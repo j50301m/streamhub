@@ -27,6 +27,7 @@ fn map_to_local_path(segment_path: &str, recordings_path: &str) -> PathBuf {
 /// POST /internal/hooks/recording
 /// Called by MediaMTX when a recording segment is complete.
 /// Only saves the recording metadata to DB. Transcoding is triggered by unpublish hook.
+#[tracing::instrument(skip(state, payload), fields(stream_key = %payload.stream_key, segment_path = %payload.segment_path))]
 pub(crate) async fn recording_hook(
     State(state): State<AppState>,
     Json(payload): Json<RecordingHookPayload>,

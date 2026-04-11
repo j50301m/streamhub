@@ -126,6 +126,7 @@ fn build_stream_response(model: stream::Model, mediamtx_base: &str) -> StreamRes
 }
 
 /// GET /v1/streams/vod
+#[tracing::instrument(skip(state))]
 pub(crate) async fn list_vod_streams(
     State(state): State<AppState>,
 ) -> Result<Json<DataResponse<Vec<LiveStreamResponse>>>, AppError> {
@@ -140,6 +141,7 @@ pub(crate) async fn list_vod_streams(
 }
 
 /// GET /v1/streams/live
+#[tracing::instrument(skip(state))]
 pub(crate) async fn list_live_streams(
     State(state): State<AppState>,
 ) -> Result<Json<DataResponse<Vec<LiveStreamResponse>>>, AppError> {
@@ -154,6 +156,7 @@ pub(crate) async fn list_live_streams(
 }
 
 /// POST /v1/streams
+#[tracing::instrument(skip(state, payload), fields(user_id = %current_user.id))]
 pub(crate) async fn create_stream(
     current_user: CurrentUser,
     State(state): State<AppState>,
@@ -191,6 +194,7 @@ pub(crate) async fn create_stream(
 }
 
 /// GET /v1/streams
+#[tracing::instrument(skip(state, params), fields(user_id = %current_user.id))]
 pub(crate) async fn list_streams(
     current_user: CurrentUser,
     State(state): State<AppState>,
@@ -237,6 +241,7 @@ pub(crate) async fn list_streams(
 }
 
 /// GET /v1/streams/:id
+#[tracing::instrument(skip(state), fields(stream_id = %id))]
 pub(crate) async fn get_stream(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -253,6 +258,7 @@ pub(crate) async fn get_stream(
 }
 
 /// PATCH /v1/streams/:id
+#[tracing::instrument(skip(state, payload), fields(stream_id = %id, user_id = %current_user.id))]
 pub(crate) async fn update_stream(
     current_user: CurrentUser,
     State(state): State<AppState>,
@@ -287,6 +293,7 @@ pub(crate) async fn update_stream(
 }
 
 /// DELETE /v1/streams/:id
+#[tracing::instrument(skip(state), fields(stream_id = %id, user_id = %current_user.id))]
 pub(crate) async fn delete_stream(
     current_user: CurrentUser,
     State(state): State<AppState>,
@@ -315,6 +322,7 @@ pub(crate) async fn delete_stream(
 }
 
 /// POST /v1/streams/:id/end
+#[tracing::instrument(skip(state), fields(stream_id = %id, user_id = %current_user.id))]
 pub(crate) async fn end_stream(
     current_user: CurrentUser,
     State(state): State<AppState>,
@@ -358,6 +366,7 @@ pub struct StreamTokenResponse {
 }
 
 /// POST /v1/streams/:id/token
+#[tracing::instrument(skip(state), fields(stream_id = %id, user_id = %current_user.id))]
 pub(crate) async fn create_stream_token(
     current_user: CurrentUser,
     State(state): State<AppState>,
@@ -441,6 +450,7 @@ pub struct ListRecordingsQuery {
 }
 
 /// GET /v1/streams/:id/recordings
+#[tracing::instrument(skip(state, params), fields(stream_id = %id))]
 pub(crate) async fn list_recordings(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,

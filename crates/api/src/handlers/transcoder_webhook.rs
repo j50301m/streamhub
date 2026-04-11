@@ -39,6 +39,7 @@ struct TranscoderJob {
 ///
 /// Receives Pub/Sub push notifications for GCP Transcoder API job state changes.
 /// Updates the stream's vod_status based on the job result.
+#[tracing::instrument(skip(state, payload))]
 pub(crate) async fn transcoder_webhook(
     State(state): State<AppState>,
     Json(payload): Json<PubSubPush>,

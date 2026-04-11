@@ -15,6 +15,7 @@ pub enum TranscoderError {
 
 /// Transcode an MP4 file to HLS (m3u8 + ts segments) in the given output directory.
 /// Returns the path to the generated m3u8 playlist.
+#[tracing::instrument]
 pub async fn transcode_to_hls(
     input_mp4: &Path,
     output_dir: &Path,
@@ -59,6 +60,7 @@ pub async fn transcode_to_hls(
 
 /// Concatenate multiple MP4 files into a single MP4 using ffmpeg concat demuxer.
 /// Returns the path to the combined output file.
+#[tracing::instrument(fields(files = input_files.len()))]
 pub async fn concat_mp4(
     input_files: &[PathBuf],
     output_path: &Path,
@@ -117,6 +119,7 @@ pub async fn concat_mp4(
 /// Create a GCP Transcoder API job to transcode an MP4 into multi-resolution ABR HLS.
 ///
 /// Returns the job name (e.g. `projects/{p}/locations/{l}/jobs/{id}`).
+#[tracing::instrument(skip(auth_token))]
 pub async fn create_job(
     project_id: &str,
     location: &str,
