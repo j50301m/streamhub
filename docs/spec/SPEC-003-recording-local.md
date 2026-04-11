@@ -1,6 +1,6 @@
 # SPEC-003 錄影功能（本地版）
 
-狀態：in-progress
+狀態：done
 
 ## 目標
 

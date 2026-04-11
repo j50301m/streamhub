@@ -85,4 +85,3 @@ volumes:
 networks:
   default:
     name: streamhub
-    external: true

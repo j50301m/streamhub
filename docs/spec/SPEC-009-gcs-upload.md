@@ -1,6 +1,6 @@
 # SPEC-009 GCS 上傳
 
-狀態：review
+狀態：done
 
 ## 目標
 

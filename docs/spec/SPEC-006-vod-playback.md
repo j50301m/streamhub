@@ -1,6 +1,6 @@
 # SPEC-006 VOD 回放
 
-狀態：review
+狀態：done
 
 ## 目標
 

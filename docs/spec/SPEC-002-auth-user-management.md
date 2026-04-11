@@ -1,6 +1,6 @@
 # SPEC-002 認證 + 使用者管理
 
-狀態：in-progress
+狀態：done
 
 ## 目標
 
