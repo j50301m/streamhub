@@ -20,8 +20,8 @@
 - `crates/stream/` — 骨架（空 crate）
 - `crates/storage/` — 骨架（空 crate）
 - `crates/transcoder/` — 骨架（空 crate）
-- `deploy/docker-compose.yml` — PostgreSQL 17（port 5433）+ MediaMTX
-- `deploy/mediamtx.yml` — WHIP/WHEP + webhook 設定
+- `deploy/services/docker-compose.yml` — PostgreSQL 17（port 5433）+ MediaMTX
+- `deploy/services/mediamtx.yml` — WHIP/WHEP + webhook 設定
 - `web/broadcaster/index.html` — 推流頁面
 - `web/viewer/index.html` — 觀看頁面
 
@@ -33,7 +33,7 @@
 - [x] SPEC-001-04 API 啟動時用 get_schema_registry("entity::*").sync() 自動同步 schema
 - [x] SPEC-001-05 api crate — Axum 骨架 + GET /healthz + POST /v1/streams + GET /v1/streams/:id
 - [x] SPEC-001-06 hook crate + POST /internal/hooks/publish（publish/unpublish → 更新 stream status）
-- [x] SPEC-001-07 deploy/mediamtx.yml — 設定 WHIP/WHEP path、webhook 指向 API、錄製暫時關閉
+- [x] SPEC-001-07 deploy/services/mediamtx.yml — 設定 WHIP/WHEP path、webhook 指向 API、錄製暫時關閉
 - [x] SPEC-001-08 web/broadcaster/index.html — getUserMedia → WHIP 推流
 - [x] SPEC-001-09 web/viewer/index.html — WHEP 拉流 + hls.js fallback
 
@@ -43,7 +43,7 @@
 
 ```bash
 # 1. 啟動 PostgreSQL + MediaMTX
-docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/services/docker-compose.yml up -d
 
 # 2. 確認容器正常
 docker ps  # 應看到 streamhub-postgres (healthy) + streamhub-mediamtx
@@ -117,7 +117,7 @@ cargo build && cargo test && cargo clippy -- -D warnings && cargo fmt --check
 ### 清理
 
 ```bash
-docker compose -f deploy/docker-compose.yml down
+docker compose -f deploy/services/docker-compose.yml down
 ```
 
 ## 備註

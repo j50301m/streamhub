@@ -4,6 +4,7 @@ pub mod error;
 pub use config::AppConfig;
 pub use error::AppError;
 
+use metrics_exporter_prometheus::PrometheusHandle;
 use repo::UnitOfWork;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::sync::Arc;
@@ -16,6 +17,7 @@ pub struct AppState {
     pub uow: UnitOfWork,
     pub config: AppConfig,
     pub storage: Option<Arc<dyn ObjectStorage>>,
+    pub metrics: PrometheusHandle,
 }
 
 /// Initialize database connection pool with statement_timeout.

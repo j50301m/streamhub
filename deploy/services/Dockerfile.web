@@ -1,4 +1,4 @@
 FROM nginx:alpine
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+COPY deploy/services/nginx.conf /etc/nginx/conf.d/default.conf
 COPY web/broadcaster /usr/share/nginx/html/broadcaster
 COPY web/viewer /usr/share/nginx/html/viewer

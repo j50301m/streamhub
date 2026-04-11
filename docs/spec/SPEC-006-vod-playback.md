@@ -9,13 +9,13 @@
 ## 影響範圍
 
 新增 / 修改：
-- `deploy/Dockerfile.api` — 加 ffmpeg
+- `deploy/services/Dockerfile.api` — 加 ffmpeg
 - `crates/transcoder/src/` — ffmpeg 呼叫封裝（MP4 → HLS）
 - `crates/hook/src/publish.rs` — unpublish 時觸發轉檔
 - `crates/entity/src/stream.rs` — 加 hls_url 欄位
 - `crates/api/src/routes/streams.rs` — stream response 加 hls_url、recordings 改公開
-- `deploy/nginx.conf` — 加 /vod/ location serve HLS
-- `deploy/docker-compose.yml` — web service 也 mount recordings volume
+- `deploy/services/nginx.conf` — 加 /vod/ location serve HLS
+- `deploy/services/docker-compose.yml` — web service 也 mount recordings volume
 - `web/viewer/index.html` — VOD 回放 UI
 
 ## Todo list

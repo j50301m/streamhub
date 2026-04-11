@@ -1,3 +1,5 @@
+stream_over_http_enabled: true
+
 server:
   http_listen_port: 3200
 
@@ -6,7 +8,7 @@ distributor:
     otlp:
       protocols:
         grpc:
-          endpoint: 0.0.0.0:4317
+          endpoint: "0.0.0.0:4317"
 
 storage:
   trace:

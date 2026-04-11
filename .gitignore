@@ -23,14 +23,8 @@ Thumbs.db
 # Worktrees (subagent working directories)
 /worktrees/
 
-# Recordings (MediaMTX local recordings)
-deploy/recordings/*
-
 # SSL certificates (self-signed, local dev)
-deploy/ssl/
-
-# Fake GCS server data (local dev)
-deploy/gcs-data/
+deploy/services/ssl/
 
 # Claude setting
 .claude/*

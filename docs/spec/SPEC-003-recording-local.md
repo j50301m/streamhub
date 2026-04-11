@@ -15,8 +15,8 @@
 - `crates/hook/src/recording.rs` — 錄影完成 webhook handler
 - `crates/api/src/routes/streams.rs` — GET /v1/streams/:id/recordings
 - `crates/api/src/routes/streams.rs` — stream response 加 vod_status
-- `deploy/mediamtx.yml` — 開啟錄製 + runOnRecordSegmentComplete webhook
-- `deploy/docker-compose.yml` — recordings volume mount
+- `deploy/services/mediamtx.yml` — 開啟錄製 + runOnRecordSegmentComplete webhook
+- `deploy/services/docker-compose.yml` — recordings volume mount
 
 ## Todo list
 
@@ -34,7 +34,7 @@
 ### 前置準備
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/services/docker-compose.yml up -d
 cargo run -p api
 ```
 

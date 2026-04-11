@@ -5,8 +5,16 @@ mod streams_test;
 use axum::body::Body;
 use common::AppConfig;
 use http_body_util::BodyExt;
+use metrics_exporter_prometheus::PrometheusHandle;
 
 const JWT_SECRET: &str = "test-secret";
+
+fn test_metrics() -> PrometheusHandle {
+    // Each test needs its own recorder; use a throwaway builder.
+    metrics_exporter_prometheus::PrometheusBuilder::new()
+        .build_recorder()
+        .handle()
+}
 
 fn test_config() -> AppConfig {
     AppConfig {

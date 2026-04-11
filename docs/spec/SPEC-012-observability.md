@@ -25,11 +25,11 @@
 
 新增：
 - `crates/api/src/middleware/metrics.rs` — Prometheus HTTP metrics middleware
-- `deploy/docker-compose.observability.yml` — 獨立 compose：Grafana + Prometheus + Tempo + Loki
-- `deploy/prometheus.yml` — Prometheus scrape config
-- `deploy/tempo.yml` — Tempo config
-- `deploy/loki.yml` — Loki config
-- `deploy/grafana/` — datasource provisioning + dashboard JSON
+- `deploy/observability/docker-compose.yml` — 獨立 compose：Grafana + Prometheus + Tempo + Loki
+- `deploy/observability/prometheus.yml` — Prometheus scrape config
+- `deploy/observability/tempo.yml` — Tempo config
+- `deploy/observability/loki.yml` — Loki config
+- `deploy/observability/grafana/` — datasource provisioning + dashboard JSON
 
 ## Todo list
 
@@ -37,13 +37,51 @@
 - [x] SPEC-012-02 structured logging — tracing log 輸出到 stdout（JSON 格式）+ 推送到 Loki，帶 trace_id context
 - [x] SPEC-012-03 Prometheus HTTP metrics — GET /metrics endpoint，暴露 request duration/count/status
 - [x] SPEC-012-04 Config — OTEL_EXPORTER_OTLP_ENDPOINT
-- [x] SPEC-012-05 docker-compose.observability.yml — Prometheus(9090) + Tempo(4317) + Loki(3100) + Grafana(3001)
+- [x] SPEC-012-05 docker-compose.observability.yml — Prometheus(9091) + Tempo(4319) + Loki(3100) + Grafana(3001)
 - [x] SPEC-012-06 Prometheus config — scrape API :8080/metrics + node-exporter（CPU/memory）
 - [x] SPEC-012-07 node-exporter — 容器內 CPU/memory 指標（或用 cAdvisor）
 - [x] SPEC-012-08 Tempo + Loki config — 接收 OTLP traces、接收 log
 - [x] SPEC-012-09 Grafana provisioning — datasource（Prometheus + Tempo + Loki）+ API overview dashboard
 - [x] SPEC-012-10 Grafana dashboard — HTTP RPS、latency p50/p95/p99、error rate、CPU、memory
 - [x] SPEC-012-11 驗證 — cargo build + test + clippy，Grafana dashboard 可查看
+
+## 驗收方法
+
+```bash
+# 1. 啟動服務 + 監控 stack
+cd deploy/services
+docker compose -f docker-compose.yml up -d
+cd ../observability
+docker compose up -d
+
+# 2. 確認所有容器 running
+docker ps | grep streamhub
+
+# 3. 確認 /metrics endpoint
+curl -s http://localhost:8080/metrics | head -20
+# 預期：看到 http_requests_total、http_request_duration_seconds 等 Prometheus metrics
+
+# 4. 打幾個 API request 產生資料
+curl -s http://localhost:8080/v1/streams/live
+curl -s -X POST http://localhost:8080/v1/auth/login -H "Content-Type: application/json" -d '{"email":"test@test.com","password":"wrong"}'
+
+# 5. 確認 Prometheus 有抓到
+# 開 http://localhost:9091 → Status → Targets → streamhub-api 應該是 UP
+# 查詢：http_requests_total → 應有資料
+
+# 6. 確認 Grafana dashboard
+# 開 http://localhost:3001 → StreamHub folder → API Overview
+# 預期：RPS、Latency、Error Rate、CPU、Memory 圖表有資料
+
+# 7. 確認 Tempo traces
+# Grafana → Explore → Tempo datasource → Search → 應看到 request traces
+
+# 8. 確認 Loki logs
+# Grafana → Explore → Loki datasource → Label: container=streamhub-api → 應看到 JSON log
+
+# 9. 確認 trace_id 關聯
+# 從 Tempo 找一個 trace_id → 去 Loki ��� trace_id 查 → 應能找到對應 log
+```
 
 ## 架構設計
 
@@ -68,26 +106,26 @@ Grafana (3001)
 
 ```bash
 # 啟動方式
-docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+docker compose -f deploy/services/docker-compose.yml -f deploy/observability/docker-compose.yml up -d
 
 # 只啟動服務（不要監控）
-docker compose up -d
+docker compose -f deploy/services/docker-compose.yml up -d
 ```
 
 ```yaml
-# deploy/docker-compose.observability.yml
+# deploy/observability/docker-compose.yml
 services:
   prometheus:
     image: prom/prometheus
     container_name: streamhub-prometheus
-    ports: ["9090:9090"]
+    ports: ["9091:9090"]
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
 
   tempo:
     image: grafana/tempo
     container_name: streamhub-tempo
-    ports: ["4317:4317"]
+    ports: ["4319:4317"]
     command: ["-config.file=/etc/tempo.yml"]
     volumes:
       - ./tempo.yml:/etc/tempo.yml:ro

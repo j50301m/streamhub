@@ -17,7 +17,7 @@
 - `crates/api/src/routes/auth.rs` — 認證 API endpoints
 - `crates/api/src/routes/streams.rs` — 加 auth middleware、owner 權限
 - `crates/api/src/middleware/` — Bearer token 驗證 middleware
-- `deploy/mediamtx.yml` — 加 auth.httpAddress 設定
+- `deploy/services/mediamtx.yml` — 加 auth.httpAddress 設定
 
 文件同步：
 - [ ] docs/api.md（新增 auth endpoints 已在文件中，確認實作一致）
@@ -35,14 +35,14 @@
 - [x] SPEC-002-09 Stream 權限 — POST /v1/streams 需登入且綁定 user_id、PATCH/DELETE/end 只有 owner、GET 保持公開
 - [x] SPEC-002-10 POST /v1/streams/:id/token — 產生短效推流 token（1hr），owner + broadcaster only
 - [x] SPEC-002-11 POST /internal/auth — MediaMTX HTTP auth endpoint（publish 驗證 stream token、read 驗證 stream 是否 Live）
-- [x] SPEC-002-12 deploy/mediamtx.yml — 加 auth type: http + httpAddress 指向 /internal/auth
+- [x] SPEC-002-12 deploy/services/mediamtx.yml — 加 auth type: http + httpAddress 指向 /internal/auth
 
 ## 驗收流程
 
 ### 前置準備
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/services/docker-compose.yml up -d
 cargo run -p api
 # schema 自動 sync（users, streams, stream_tokens 表都會建立）
 ```

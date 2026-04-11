@@ -17,3 +17,4 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
 storage = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }

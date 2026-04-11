@@ -151,7 +151,7 @@
             const endpoint = authMode === 'login' ? '/v1/auth/login' : '/v1/auth/register';
             const body = authMode === 'login'
                 ? { email, password }
-                : { email, password, role: 'Broadcaster' };
+                : { email, password, role: 'broadcaster' };
 
             try {
                 const res = await fetch(apiUrl() + endpoint, {

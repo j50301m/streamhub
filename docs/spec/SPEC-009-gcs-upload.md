@@ -14,7 +14,7 @@
 - `crates/common/src/config.rs` — GCS 設定（bucket、credentials、enabled）
 - `crates/common/src/lib.rs` — AppState 加 storage
 - `crates/api/src/handlers/recording.rs` — 轉檔後上傳 HLS 到 GCS
-- `deploy/docker-compose.yml` — 加 fake-gcs-server 容器
+- `deploy/services/docker-compose.yml` — 加 fake-gcs-server 容器
 - `web/viewer/index.html` — VOD hls_url 可能指向 GCS 公開 URL
 
 ## Todo list

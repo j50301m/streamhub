@@ -9,20 +9,20 @@
 ## 影響範圍
 
 新增 / 修改：
-- `deploy/Dockerfile.api` — Rust API multi-stage build
-- `deploy/docker-compose.yml` — 加 api service + web service
-- `deploy/Dockerfile.web` — nginx 靜態前端
-- `deploy/nginx.conf` — 前端 nginx 設定
+- `deploy/services/Dockerfile.api` — Rust API multi-stage build
+- `deploy/services/docker-compose.yml` — 加 api service + web service
+- `deploy/services/Dockerfile.web` — nginx 靜態前端
+- `deploy/services/nginx.conf` — 前端 nginx 設定
 - `web/broadcaster/index.html` — API URL 改為相對路徑或可設定
 - `web/viewer/index.html` — 同上
-- `deploy/mediamtx.yml` — webhook URL 改為 docker network 內部地址
+- `deploy/services/mediamtx.yml` — webhook URL 改為 docker network 內部地址
 
 ## Todo list
 
-- [x] SPEC-005-01 deploy/Dockerfile.api — multi-stage build（builder + runtime），輸出精簡 image
+- [x] SPEC-005-01 deploy/services/Dockerfile.api — multi-stage build（builder + runtime），輸出精簡 image
 - [x] SPEC-005-02 docker-compose.yml — 加 api service（連 postgres、共用 recordings volume、環境變數設定）
 - [x] SPEC-005-03 mediamtx.yml — webhook URL 從 host.docker.internal 改為 docker network 的 api:8080
-- [x] SPEC-005-04 deploy/nginx.conf + Dockerfile.web — nginx serve 靜態前端 + 反向代理 API
+- [x] SPEC-005-04 deploy/services/nginx.conf + Dockerfile.web — nginx serve 靜態前端 + 反向代理 API
 - [x] SPEC-005-05 docker-compose.yml — 加 web service（nginx，port 3000）
 - [x] SPEC-005-06 web 前端 — API URL 和 MediaMTX URL 改為透過 nginx 反向代理的相對路徑或可設定
 - [x] SPEC-005-07 驗證 — docker compose up --build 全部啟動，端到端測試

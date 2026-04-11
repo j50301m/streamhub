@@ -18,14 +18,14 @@ services:
 
   api:
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile.api
+      context: ../..
+      dockerfile: deploy/services/Dockerfile.api
     container_name: streamhub-api
     env_file: .env
     ports:
       - "8080:8080"
     volumes:
-      - ./recordings:/recordings
+      - recordings:/recordings
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,7 +48,7 @@ services:
       - "9997:9997"       # API
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
-      - ./recordings:/recordings
+      - recordings:/recordings
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,26 +60,29 @@ services:
       - "4443:4443"
     command: ["-scheme", "http", "-port", "4443", "-public-host", "fake-gcs:4443", "-external-url", "http://fake-gcs:4443"]
     volumes:
-      - ./gcs-data:/storage
+      - gcs-data:/storage
 
   web:
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile.web
+      context: ../..
+      dockerfile: deploy/services/Dockerfile.web
     container_name: streamhub-web
     ports:
       - "3000:3000"
       - "3443:3443"
     volumes:
       - ./ssl:/etc/nginx/ssl:ro
-      - ./recordings:/recordings:ro
+      - recordings:/recordings:ro
     depends_on:
       - api
       - mediamtx
 
 volumes:
   pgdata:
+  recordings:
+  gcs-data:
 
 networks:
   default:
     name: streamhub
+    external: true
