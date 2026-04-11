@@ -3,14 +3,14 @@ use axum::Router;
 use cfgloader_rs::FromEnv;
 use common::{AppConfig, AppState};
 use metrics_exporter_prometheus::PrometheusHandle;
-use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use repo::UnitOfWork;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage::GcsStorage;
 use tower_http::cors::CorsLayer;
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultMakeSpan, TraceLayer};
+use tracing::Level;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -49,7 +49,10 @@ impl App {
                 middleware::metrics::track_metrics,
             ))
             .layer(CorsLayer::permissive())
-            .layer(TraceLayer::new_for_http())
+            .layer(
+                TraceLayer::new_for_http()
+                    .make_span_with(DefaultMakeSpan::new().level(Level::INFO)),
+            )
             .with_state(state);
 
         Ok(Self { router, addr })
