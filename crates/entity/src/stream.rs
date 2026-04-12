@@ -56,6 +56,9 @@ pub struct Model {
     /// HLS playlist URL for VOD playback (set after transcoding completes).
     #[sea_orm(nullable)]
     pub hls_url: Option<String>,
+    /// Thumbnail image URL (set after transcoding extracts first frame).
+    #[sea_orm(nullable)]
+    pub thumbnail_url: Option<String>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

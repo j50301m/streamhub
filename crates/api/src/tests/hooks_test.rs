@@ -24,6 +24,7 @@ fn live_stream() -> stream::Model {
         ended_at: None,
         created_at: Utc::now(),
         hls_url: None,
+        thumbnail_url: None,
     }
 }
 

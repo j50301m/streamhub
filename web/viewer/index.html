@@ -36,6 +36,9 @@
         .badge-vod { background: #4ecdc4; color: #1a1a2e; }
         .vod-card:hover { border-color: #4ecdc4; background: #1a2a4e; }
         .live-empty { color: #666; font-size: 14px; padding: 16px 0; }
+        .card-thumb { width: 100%; aspect-ratio: 16/9; border-radius: 4px; margin-bottom: 8px; object-fit: cover; background: #222; }
+        .card-thumb-placeholder { width: 100%; aspect-ratio: 16/9; border-radius: 4px; margin-bottom: 8px; background: #222; display: flex; align-items: center; justify-content: center; }
+        .card-thumb-placeholder svg { width: 32px; height: 32px; opacity: 0.4; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
@@ -119,6 +122,13 @@
             return div.innerHTML;
         }
 
+        function thumbnailHtml(url) {
+            if (url) {
+                return '<img class="card-thumb" src="' + escapeHtml(url) + '" alt="thumbnail" />';
+            }
+            return '<div class="card-thumb-placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg></div>';
+        }
+
         function renderLiveStreams(streams) {
             const grid = document.getElementById('live-grid');
             if (!streams || streams.length === 0) {
@@ -130,6 +140,7 @@
                 var shortKey = s.stream_key.substring(0, 8);
                 var ago = s.started_at ? timeAgo(s.started_at) : '';
                 return '<div class="live-card" onclick="selectStream(\'' + s.stream_key + '\')">' +
+                    thumbnailHtml(s.thumbnail_url) +
                     '<span class="card-badge badge-live">LIVE</span>' +
                     '<div class="card-title">' + escapeHtml(title) + '</div>' +
                     '<div class="card-key">' + shortKey + '</div>' +
@@ -149,6 +160,7 @@
                 var shortKey = s.stream_key.substring(0, 8);
                 var ago = s.ended_at ? timeAgo(s.ended_at) : '';
                 return '<div class="live-card vod-card" onclick="playVod(\'' + s.stream_key + '\', \'' + escapeHtml(s.hls_url || '') + '\')">' +
+                    thumbnailHtml(s.thumbnail_url) +
                     '<span class="card-badge badge-vod">VOD</span>' +
                     '<div class="card-title">' + escapeHtml(title) + '</div>' +
                     '<div class="card-key">' + shortKey + '</div>' +

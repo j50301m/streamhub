@@ -219,14 +219,42 @@ async fn run_transcode_local(
                 format!("/vod/{stream_key}/hls/index.m3u8")
             };
 
+            // Extract thumbnail from the input MP4
+            let thumb_path = output_dir.parent().unwrap_or(output_dir).join("thumb.jpg");
+            let thumbnail_url = async {
+                if let Err(e) = transcoder::extract_thumbnail(input_mp4, &thumb_path).await {
+                    tracing::warn!(stream_id = %stream_id, error = %e, "Thumbnail extraction failed");
+                    return None;
+                }
+
+                let Some(store) = storage else {
+                    return Some(format!("/vod/{stream_key}/thumb.jpg"));
+                };
+
+                let thumb_key = format!("streams/{}/thumb.jpg", stream_key);
+                match store.upload_file(&thumb_path, &thumb_key).await {
+                    Ok(_) => {
+                        let url = store.public_url(&thumb_key);
+                        tracing::info!(stream_id = %stream_id, %url, "Thumbnail uploaded");
+                        Some(url)
+                    }
+                    Err(e) => {
+                        tracing::warn!(stream_id = %stream_id, error = %e, "Thumbnail upload failed");
+                        None
+                    }
+                }
+            }
+            .await;
+
             let active = stream::ActiveModel {
                 id: Set(stream_id),
                 vod_status: Set(stream::VodStatus::Ready),
                 hls_url: Set(Some(hls_url.clone())),
+                thumbnail_url: Set(thumbnail_url.clone()),
                 ..Default::default()
             };
             uow.stream_repo().update(active).await?;
-            tracing::info!(stream_id = %stream_id, %hls_url, "VOD transcode completed");
+            tracing::info!(stream_id = %stream_id, %hls_url, ?thumbnail_url, "VOD transcode completed");
         }
         Err(e) => {
             tracing::error!(stream_id = %stream_id, error = %e, "VOD transcode failed");
@@ -275,14 +303,19 @@ async fn run_transcode_gcp(
     )
     .await?;
 
-    // Set hls_url to expected output path (will be confirmed by Pub/Sub webhook)
+    // Set hls_url and thumbnail_url to expected output paths (confirmed by Pub/Sub webhook)
     let hls_url = format!(
         "https://storage.googleapis.com/{}/streams/{}/output/index.m3u8",
+        config.gcs_bucket, stream_key
+    );
+    let thumbnail_url = format!(
+        "https://storage.googleapis.com/{}/streams/{}/output/thumb0000000000.jpeg",
         config.gcs_bucket, stream_key
     );
     let active = stream::ActiveModel {
         id: Set(stream_id),
         hls_url: Set(Some(hls_url)),
+        thumbnail_url: Set(Some(thumbnail_url)),
         ..Default::default()
     };
     uow.stream_repo().update(active).await?;
@@ -324,6 +357,7 @@ mod tests {
             ended_at: None,
             created_at: Utc::now(),
             hls_url: None,
+            thumbnail_url: None,
         }
     }
 

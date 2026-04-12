@@ -58,6 +58,47 @@ pub async fn transcode_to_hls(
     Ok(output_m3u8)
 }
 
+/// Extract a single thumbnail frame from an MP4 file using ffmpeg.
+/// Returns the path to the generated JPEG file.
+#[tracing::instrument]
+pub async fn extract_thumbnail(
+    input_mp4: &Path,
+    output_jpg: &Path,
+) -> Result<PathBuf, TranscoderError> {
+    if let Some(parent) = output_jpg.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    tracing::info!(
+        input = %input_mp4.display(),
+        output = %output_jpg.display(),
+        "Extracting thumbnail from video"
+    );
+
+    let output = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-i",
+            input_mp4.to_str().unwrap_or_default(),
+            "-frames:v",
+            "1",
+            "-q:v",
+            "5",
+            output_jpg.to_str().unwrap_or_default(),
+        ])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        tracing::error!(%stderr, "ffmpeg thumbnail extraction failed");
+        return Err(TranscoderError::FfmpegFailed(stderr));
+    }
+
+    tracing::info!(output = %output_jpg.display(), "Thumbnail extraction completed");
+    Ok(output_jpg.to_path_buf())
+}
+
 /// Concatenate multiple MP4 files into a single MP4 using ffmpeg concat demuxer.
 /// Returns the path to the combined output file.
 #[tracing::instrument(fields(files = input_files.len()))]
@@ -202,6 +243,16 @@ pub async fn create_job(
                     "muxStreams": ["hls-1080p", "hls-720p", "hls-360p"]
                 }
             ],
+            "spriteSheets": [{
+                "filePrefix": "thumb",
+                "spriteWidthPixels": 640,
+                "spriteHeightPixels": 360,
+                "columnCount": 1,
+                "rowCount": 1,
+                "totalCount": 1,
+                "quality": 80,
+                "format": "jpeg"
+            }],
             "pubsubDestination": {
                 "topic": format!("projects/{project_id}/topics/streamhub-transcoder")
             }
