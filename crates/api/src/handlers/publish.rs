@@ -134,10 +134,11 @@ async fn spawn_thumbnail_task(state: &AppState, stream_id: Uuid, stream_key: &st
     let uow = state.uow.clone();
     let storage = state.storage.clone();
     let thumbnails_path = state.config.thumbnails_path.clone();
+    let capture_interval = state.config.thumbnail_capture_interval_secs;
     let stream_key = stream_key.to_string();
 
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        let mut interval = tokio::time::interval(Duration::from_secs(capture_interval));
         // Skip the first immediate tick
         interval.tick().await;
 

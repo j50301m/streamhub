@@ -55,6 +55,9 @@ pub struct AppConfig {
 
     #[env("OTEL_EXPORTER_OTLP_ENDPOINT", default = "http://localhost:4317")]
     pub otel_endpoint: String,
+
+    #[env("THUMBNAIL_CAPTURE_INTERVAL_SECS", default = "60")]
+    pub thumbnail_capture_interval_secs: u64,
 }
 
 impl AppConfig {
