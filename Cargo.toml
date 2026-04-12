@@ -65,6 +65,7 @@ tracing-opentelemetry = "0.32"
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
 cfgloader_rs = "1.0"
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # Internal crates
 repo = { path = "crates/repo" }

@@ -1,4 +1,5 @@
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use common::AppState;
 use serde_json::{Value, json};
@@ -40,6 +41,11 @@ pub fn app_router() -> Router<AppState> {
         .route(
             "/v1/streams/{id}/token",
             post(handlers::streams::create_stream_token),
+        )
+        .route(
+            "/v1/streams/{id}/thumbnail",
+            post(handlers::thumbnail::upload_thumbnail)
+                .layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
         )
         .route(
             "/v1/streams/{id}/recordings",

@@ -77,6 +77,7 @@ async fn create_stream_success() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        live_tasks: Default::default(),
     };
 
     let req = Request::builder()
@@ -108,6 +109,7 @@ async fn create_stream_viewer_forbidden() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        live_tasks: Default::default(),
     };
 
     let req = Request::builder()

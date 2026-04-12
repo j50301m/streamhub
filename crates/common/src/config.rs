@@ -25,6 +25,10 @@ pub struct AppConfig {
     #[env("RECORDINGS_PATH", default = "./recordings")]
     pub recordings_path: String,
 
+    /// Local path where live thumbnails are stored.
+    #[env("THUMBNAILS_PATH", default = "/thumbnails")]
+    pub thumbnails_path: String,
+
     #[env("STORAGE_ENABLED", default = "false")]
     pub storage_enabled: String,
 

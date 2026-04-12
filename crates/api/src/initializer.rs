@@ -5,15 +5,18 @@ use common::{AppConfig, AppState};
 use metrics_exporter_prometheus::PrometheusHandle;
 use opentelemetry_otlp::WithExportConfig;
 use repo::UnitOfWork;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage::GcsStorage;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use uuid::Uuid;
 
 use crate::middleware;
 use crate::routes;
@@ -21,6 +24,7 @@ use crate::routes;
 pub struct App {
     router: Router,
     addr: SocketAddr,
+    live_tasks: Arc<tokio::sync::Mutex<HashMap<Uuid, CancellationToken>>>,
 }
 
 impl App {
@@ -36,11 +40,14 @@ impl App {
         let storage = init_storage(&config).await?;
         let addr = SocketAddr::new(config.host.parse()?, config.port);
 
+        let live_tasks = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+
         let state = AppState {
             uow: UnitOfWork::new(db),
             config,
             storage,
             metrics: prometheus_handle,
+            live_tasks: live_tasks.clone(),
         };
 
         let router = Router::new()
@@ -55,15 +62,37 @@ impl App {
             )
             .with_state(state);
 
-        Ok(Self { router, addr })
+        Ok(Self {
+            router,
+            addr,
+            live_tasks,
+        })
     }
 
     pub async fn run(self) -> Result<()> {
         tracing::info!("Starting server on {}", self.addr);
         let listener = tokio::net::TcpListener::bind(self.addr).await?;
-        axum::serve(listener, self.router).await?;
+        axum::serve(listener, self.router)
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
+
+        // Cancel all active live thumbnail tasks on shutdown
+        let tasks = self.live_tasks.lock().await;
+        for (stream_id, token) in tasks.iter() {
+            tracing::info!(%stream_id, "Cancelling live thumbnail task on shutdown");
+            token.cancel();
+        }
+        drop(tasks);
+
         Ok(())
     }
+}
+
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("failed to listen for ctrl+c");
+    tracing::info!("Shutdown signal received");
 }
 
 fn init_telemetry(otel_endpoint: &str) -> Result<PrometheusHandle> {

@@ -26,6 +26,7 @@ services:
       - "8080:8080"
     volumes:
       - recordings:/recordings
+      - thumbnails:/thumbnails
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,6 +74,7 @@ services:
     volumes:
       - ./ssl:/etc/nginx/ssl:ro
       - recordings:/recordings:ro
+      - thumbnails:/thumbnails:ro
     depends_on:
       - api
       - mediamtx
@@ -80,6 +82,7 @@ services:
 volumes:
   pgdata:
   recordings:
+  thumbnails:
   gcs-data:
 
 networks:
