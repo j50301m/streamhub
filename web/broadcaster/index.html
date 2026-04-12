@@ -390,7 +390,7 @@
                 var statusClass = 'status-' + s.status.toLowerCase();
                 var statusLabel = s.status.charAt(0).toUpperCase() + s.status.slice(1);
                 var thumbBtn = '';
-                if (s.vod_status === 'Ready') {
+                if (s.vod_status === 'ready') {
                     thumbBtn = '<label class="thumb-upload-btn" style="display:inline-block;margin-top:6px;padding:4px 8px;background:#0f3460;color:#fff;border-radius:4px;font-size:11px;cursor:pointer;">' +
                         'Change Thumbnail' +
                         '<input type="file" accept="image/jpeg" style="display:none" onchange="uploadCustomThumb(\'' + s.id + '\', this)" />' +

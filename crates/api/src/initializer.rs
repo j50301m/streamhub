@@ -24,6 +24,8 @@ use crate::routes;
 pub struct App {
     router: Router,
     addr: SocketAddr,
+    /// Active live thumbnail capture tasks (server-side HLS periodic capture).
+    /// Key = stream_id, Value = CancellationToken to cancel on unpublish or shutdown.
     live_tasks: Arc<tokio::sync::Mutex<HashMap<Uuid, CancellationToken>>>,
 }
 

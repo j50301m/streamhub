@@ -34,6 +34,7 @@ pub(crate) fn test_config() -> AppConfig {
         transcoder_location: "asia-east1".to_string(),
         pubsub_verify_token: String::new(),
         otel_endpoint: "http://localhost:4317".to_string(),
+        thumbnail_capture_interval_secs: 60,
     }
 }
 
