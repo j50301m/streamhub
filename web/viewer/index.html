@@ -129,6 +129,13 @@
             return '<div class="card-thumb-placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg></div>';
         }
 
+        function liveThumbnailHtml(url) {
+            if (url) {
+                return '<img class="card-thumb" data-live="true" data-base-src="' + escapeHtml(url) + '" src="' + escapeHtml(url) + '?t=' + Date.now() + '" alt="thumbnail" />';
+            }
+            return '<div class="card-thumb-placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg></div>';
+        }
+
         function renderLiveStreams(streams) {
             const grid = document.getElementById('live-grid');
             if (!streams || streams.length === 0) {
@@ -140,7 +147,7 @@
                 var shortKey = s.stream_key.substring(0, 8);
                 var ago = s.started_at ? timeAgo(s.started_at) : '';
                 return '<div class="live-card" onclick="selectStream(\'' + s.stream_key + '\')">' +
-                    thumbnailHtml(s.thumbnail_url) +
+                    liveThumbnailHtml(s.thumbnail_url) +
                     '<span class="card-badge badge-live">LIVE</span>' +
                     '<div class="card-title">' + escapeHtml(title) + '</div>' +
                     '<div class="card-key">' + shortKey + '</div>' +
@@ -241,6 +248,20 @@
             }
         }
 
+        let liveThumbnailInterval = null;
+
+        function refreshLiveThumbnails() {
+            var grid = document.getElementById('live-grid');
+            var imgs = grid.querySelectorAll('img.card-thumb[data-live="true"]');
+            var now = Date.now();
+            imgs.forEach(function(img) {
+                var base = img.getAttribute('data-base-src');
+                if (base) {
+                    img.src = base + (base.indexOf('?') >= 0 ? '&' : '?') + 't=' + now;
+                }
+            });
+        }
+
         // Initial fetch and auto-refresh every 10 seconds
         fetchLiveStreams();
         fetchVodStreams();
@@ -248,6 +269,9 @@
             fetchLiveStreams();
             fetchVodStreams();
         }, 10000);
+
+        // Refresh live thumbnails every 30 seconds
+        liveThumbnailInterval = setInterval(refreshLiveThumbnails, 30000);
 
         function log(msg) {
             const el = document.getElementById('log');

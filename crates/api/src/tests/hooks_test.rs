@@ -58,6 +58,7 @@ async fn recording_hook_saves_segment() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        live_tasks: Default::default(),
     };
 
     let req = Request::builder()
@@ -88,6 +89,7 @@ async fn recording_hook_stream_not_found_returns_404() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        live_tasks: Default::default(),
     };
 
     let req = Request::builder()

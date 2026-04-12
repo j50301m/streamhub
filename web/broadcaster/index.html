@@ -123,6 +123,7 @@
         let localStream = null;
         let authMode = 'login';
         let mediamtxBase = '';
+        let thumbnailInterval = null;
 
         // Detect environment: if served via nginx (port 3000), use proxy paths
         // Otherwise (direct file open or other port), use direct localhost URLs
@@ -312,12 +313,48 @@
                 document.getElementById('btn-start').disabled = true;
                 document.getElementById('btn-stop').disabled = false;
                 log('Streaming live!');
+
+                // Start periodic canvas thumbnail capture (every 30s)
+                startThumbnailCapture();
             } catch (e) {
                 log('Streaming error: ' + e.message);
             }
         }
 
+        function startThumbnailCapture() {
+            if (thumbnailInterval) clearInterval(thumbnailInterval);
+            thumbnailInterval = setInterval(async function() {
+                try {
+                    var video = document.getElementById('preview');
+                    if (!video.videoWidth || !video.videoHeight) return;
+                    var canvas = document.createElement('canvas');
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    canvas.getContext('2d').drawImage(video, 0, 0);
+                    var blob = await new Promise(function(resolve) {
+                        canvas.toBlob(resolve, 'image/jpeg', 0.7);
+                    });
+                    if (!blob || !currentStreamId) return;
+                    await fetch(apiUrl() + '/v1/streams/' + currentStreamId + '/thumbnail', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': 'image/jpeg' },
+                        body: blob
+                    });
+                } catch (e) {
+                    // Thumbnail upload failure should not affect streaming
+                }
+            }, 30000);
+        }
+
+        function stopThumbnailCapture() {
+            if (thumbnailInterval) {
+                clearInterval(thumbnailInterval);
+                thumbnailInterval = null;
+            }
+        }
+
         function stopStreaming() {
+            stopThumbnailCapture();
             if (pc) { pc.close(); pc = null; }
             if (localStream) {
                 localStream.getTracks().forEach(t => t.stop());
@@ -352,12 +389,47 @@
                 var title = s.title || 'Untitled';
                 var statusClass = 'status-' + s.status.toLowerCase();
                 var statusLabel = s.status.charAt(0).toUpperCase() + s.status.slice(1);
-                return '<div class="stream-card">' +
-                    thumbnailHtml(s.thumbnail_url) +
+                var thumbBtn = '';
+                if (s.vod_status === 'Ready') {
+                    thumbBtn = '<label class="thumb-upload-btn" style="display:inline-block;margin-top:6px;padding:4px 8px;background:#0f3460;color:#fff;border-radius:4px;font-size:11px;cursor:pointer;">' +
+                        'Change Thumbnail' +
+                        '<input type="file" accept="image/jpeg" style="display:none" onchange="uploadCustomThumb(\'' + s.id + '\', this)" />' +
+                        '</label>';
+                }
+                return '<div class="stream-card" id="stream-card-' + s.id + '">' +
+                    '<img class="card-thumb" id="thumb-' + s.id + '" src="' + escapeHtml(s.thumbnail_url || '') + '" alt="thumbnail" style="' + (s.thumbnail_url ? '' : 'display:none') + '" />' +
+                    (s.thumbnail_url ? '' : '<div class="card-thumb-placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg></div>') +
                     '<div class="card-title">' + escapeHtml(title) + '</div>' +
                     '<span class="card-status ' + statusClass + '">' + statusLabel + '</span>' +
+                    thumbBtn +
                     '</div>';
             }).join('');
+        }
+
+        async function uploadCustomThumb(streamId, input) {
+            var file = input.files && input.files[0];
+            if (!file) return;
+            try {
+                var res = await fetch(apiUrl() + '/v1/streams/' + streamId + '/thumbnail', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': 'image/jpeg' },
+                    body: file
+                });
+                if (!res.ok) {
+                    log('Thumbnail upload failed: ' + res.status);
+                    return;
+                }
+                var json = await res.json();
+                var thumbImg = document.getElementById('thumb-' + streamId);
+                if (thumbImg) {
+                    thumbImg.src = json.data.thumbnail_url + '?t=' + Date.now();
+                    thumbImg.style.display = '';
+                }
+                log('Custom thumbnail uploaded for stream ' + streamId.substring(0, 8));
+            } catch (e) {
+                log('Thumbnail upload error: ' + e.message);
+            }
+            input.value = '';
         }
 
         async function fetchMyStreams() {

@@ -18,3 +18,4 @@ chrono = { workspace = true }
 tokio = { workspace = true }
 storage = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
+tokio-util = { workspace = true }

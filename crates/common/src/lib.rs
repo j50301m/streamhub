@@ -7,9 +7,12 @@ pub use error::AppError;
 use metrics_exporter_prometheus::PrometheusHandle;
 use repo::UnitOfWork;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use storage::ObjectStorage;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 /// Shared application state passed to all route handlers.
 #[derive(Clone)]
@@ -18,6 +21,10 @@ pub struct AppState {
     pub config: AppConfig,
     pub storage: Option<Arc<dyn ObjectStorage>>,
     pub metrics: PrometheusHandle,
+    /// Active live thumbnail capture tasks. Key = stream_id, Value = CancellationToken.
+    /// Periodically captures HLS frames as thumbnails during live streams.
+    /// Tokens are cancelled on unpublish or server shutdown.
+    pub live_tasks: Arc<tokio::sync::Mutex<HashMap<Uuid, CancellationToken>>>,
 }
 
 /// Initialize database connection pool with statement_timeout.

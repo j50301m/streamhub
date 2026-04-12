@@ -99,6 +99,47 @@ pub async fn extract_thumbnail(
     Ok(output_jpg.to_path_buf())
 }
 
+/// Capture a single frame from an HLS stream and save as JPEG.
+/// Used for periodic live thumbnail generation.
+#[tracing::instrument]
+pub async fn capture_hls_thumbnail(
+    hls_url: &str,
+    output_path: &Path,
+) -> Result<PathBuf, TranscoderError> {
+    if let Some(parent) = output_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    tracing::info!(
+        %hls_url,
+        output = %output_path.display(),
+        "Capturing thumbnail from HLS stream"
+    );
+
+    let output = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-i",
+            hls_url,
+            "-frames:v",
+            "1",
+            "-q:v",
+            "5",
+            output_path.to_str().unwrap_or_default(),
+        ])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        tracing::error!(%stderr, "ffmpeg HLS thumbnail capture failed");
+        return Err(TranscoderError::FfmpegFailed(stderr));
+    }
+
+    tracing::info!(output = %output_path.display(), "HLS thumbnail capture completed");
+    Ok(output_path.to_path_buf())
+}
+
 /// Concatenate multiple MP4 files into a single MP4 using ffmpeg concat demuxer.
 /// Returns the path to the combined output file.
 #[tracing::instrument(fields(files = input_files.len()))]

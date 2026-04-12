@@ -42,6 +42,7 @@ async fn register_success() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        live_tasks: Default::default(),
     };
 
     let req = Request::builder()
@@ -78,6 +79,7 @@ async fn register_duplicate_email_returns_409() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        live_tasks: Default::default(),
     };
 
     let req = Request::builder()
@@ -110,6 +112,7 @@ async fn login_success() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        live_tasks: Default::default(),
     };
 
     let req = Request::builder()
@@ -144,6 +147,7 @@ async fn login_wrong_password_returns_401() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        live_tasks: Default::default(),
     };
 
     let req = Request::builder()
@@ -174,6 +178,7 @@ async fn login_user_not_found_returns_401() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        live_tasks: Default::default(),
     };
 
     let _ = JWT_SECRET; // suppress unused warning

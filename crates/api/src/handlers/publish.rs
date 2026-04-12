@@ -8,7 +8,9 @@ use sea_orm::Set;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use storage::ObjectStorage;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -84,6 +86,17 @@ pub(crate) async fn publish_hook(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    // Manage periodic thumbnail capture task
+    match payload.action.as_str() {
+        "publish" => {
+            spawn_thumbnail_task(&state, stream_id, &stream_key).await;
+        }
+        "unpublish" => {
+            cancel_thumbnail_task(&state, stream_id).await;
+        }
+        _ => {}
+    }
+
     // After unpublish: scan filesystem for recordings and trigger transcode
     if should_transcode {
         let uow = state.uow.clone();
@@ -108,6 +121,80 @@ pub(crate) async fn publish_hook(
     }
 
     Ok(StatusCode::OK)
+}
+
+/// Spawn a periodic task that captures a thumbnail from the live HLS stream every 60s.
+async fn spawn_thumbnail_task(state: &AppState, stream_id: Uuid, stream_key: &str) {
+    let token = CancellationToken::new();
+    {
+        let mut tasks = state.live_tasks.lock().await;
+        tasks.insert(stream_id, token.clone());
+    }
+
+    let uow = state.uow.clone();
+    let storage = state.storage.clone();
+    let thumbnails_path = state.config.thumbnails_path.clone();
+    let stream_key = stream_key.to_string();
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        // Skip the first immediate tick
+        interval.tick().await;
+
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    tracing::info!(stream_id = %stream_id, "Thumbnail capture task cancelled");
+                    break;
+                }
+                _ = interval.tick() => {
+                    let hls_url = format!("http://mediamtx:8888/{}/index.m3u8", stream_key);
+                    let thumb_dir = PathBuf::from(&thumbnails_path).join(&stream_key);
+                    let thumb_path = thumb_dir.join("live-thumb.jpg");
+
+                    match transcoder::capture_hls_thumbnail(&hls_url, &thumb_path).await {
+                        Ok(_) => {
+                            let thumbnail_url = if let Some(store) = &storage {
+                                let key = format!("streams/{}/live-thumb.jpg", stream_key);
+                                match store.upload_file(&thumb_path, &key).await {
+                                    Ok(_) => store.public_url(&key),
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, "Failed to upload thumbnail to storage");
+                                        continue;
+                                    }
+                                }
+                            } else {
+                                format!("/thumbnails/{}/live-thumb.jpg", stream_key)
+                            };
+
+                            let active = stream::ActiveModel {
+                                id: Set(stream_id),
+                                thumbnail_url: Set(Some(thumbnail_url)),
+                                ..Default::default()
+                            };
+                            if let Err(e) = uow.stream_repo().update(active).await {
+                                tracing::warn!(error = %e, "Failed to update thumbnail_url in DB");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(stream_id = %stream_id, error = %e, "HLS thumbnail capture failed");
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    tracing::info!(stream_id = %stream_id, "Spawned periodic thumbnail capture task");
+}
+
+/// Cancel the periodic thumbnail capture task for a stream.
+async fn cancel_thumbnail_task(state: &AppState, stream_id: Uuid) {
+    let mut tasks = state.live_tasks.lock().await;
+    if let Some(token) = tasks.remove(&stream_id) {
+        token.cancel();
+        tracing::info!(stream_id = %stream_id, "Cancelled thumbnail capture task");
+    }
 }
 
 /// Scan filesystem for MP4 recordings, transcode to HLS, optionally upload to GCS.
@@ -394,6 +481,7 @@ mod tests {
             config: test_config(),
             storage: None,
             metrics: test_metrics(),
+            live_tasks: Default::default(),
         };
 
         let req = Request::builder()
@@ -434,6 +522,7 @@ mod tests {
             config: test_config(),
             storage: None,
             metrics: test_metrics(),
+            live_tasks: Default::default(),
         };
 
         let req = Request::builder()
@@ -464,6 +553,7 @@ mod tests {
             config: test_config(),
             storage: None,
             metrics: test_metrics(),
+            live_tasks: Default::default(),
         };
 
         let req = Request::builder()
