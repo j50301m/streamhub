@@ -1,0 +1,12 @@
+target/
+worktrees/
+docs/
+.git/
+.github/
+.claude/
+*.swp
+*.swo
+*~
+.DS_Store
+.env
+deploy/services/ssl/
