@@ -139,9 +139,6 @@ async fn spawn_thumbnail_task(state: &AppState, stream_id: Uuid, stream_key: &st
 
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(capture_interval));
-        // Skip the first immediate tick
-        interval.tick().await;
-
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
