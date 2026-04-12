@@ -44,6 +44,7 @@ fn test_stream(user_id: Uuid) -> stream::Model {
         ended_at: None,
         created_at: Utc::now(),
         hls_url: None,
+        thumbnail_url: None,
     }
 }
 

@@ -40,6 +40,7 @@ pub struct StreamResponse {
     pub status: stream::StreamStatus,
     pub vod_status: stream::VodStatus,
     pub hls_url: Option<String>,
+    pub thumbnail_url: Option<String>,
     pub urls: StreamUrls,
     pub started_at: Option<chrono::DateTime<Utc>>,
     pub ended_at: Option<chrono::DateTime<Utc>>,
@@ -80,6 +81,7 @@ pub struct LiveStreamResponse {
     pub status: stream::StreamStatus,
     pub vod_status: stream::VodStatus,
     pub hls_url: Option<String>,
+    pub thumbnail_url: Option<String>,
     pub started_at: Option<chrono::DateTime<Utc>>,
     pub ended_at: Option<chrono::DateTime<Utc>>,
     pub urls: StreamUrls,
@@ -94,6 +96,7 @@ fn build_live_stream_response(model: stream::Model, mediamtx_base: &str) -> Live
         status: model.status,
         vod_status: model.vod_status,
         hls_url: model.hls_url,
+        thumbnail_url: model.thumbnail_url,
         started_at: model.started_at,
         ended_at: model.ended_at,
         urls: StreamUrls {
@@ -114,6 +117,7 @@ fn build_stream_response(model: stream::Model, mediamtx_base: &str) -> StreamRes
         status: model.status,
         vod_status: model.vod_status,
         hls_url: model.hls_url,
+        thumbnail_url: model.thumbnail_url,
         urls: StreamUrls {
             whip: format!("{mediamtx_base}/{key}/whip"),
             whep: format!("{mediamtx_base}/{key}/whep"),
@@ -182,6 +186,7 @@ pub(crate) async fn create_stream(
         ended_at: Set(None),
         created_at: Set(Utc::now()),
         hls_url: Set(None),
+        thumbnail_url: Set(None),
     };
 
     let txn = state.uow.begin().await?;

@@ -30,6 +30,17 @@
         .tab-bar { display: flex; gap: 5px; margin-bottom: 10px; }
         .tab { padding: 6px 14px; border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 13px; background: #16213e; color: #aaa; }
         .tab.active { background: #e94560; color: #fff; border-color: #e94560; }
+        .streams-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+        .streams-empty { color: #666; font-size: 14px; padding: 16px 0; }
+        .stream-card { background: #16213e; border: 1px solid #333; border-radius: 8px; padding: 12px; }
+        .stream-card .card-thumb { width: 100%; aspect-ratio: 16/9; border-radius: 4px; margin-bottom: 8px; object-fit: cover; background: #222; }
+        .stream-card .card-thumb-placeholder { width: 100%; aspect-ratio: 16/9; border-radius: 4px; margin-bottom: 8px; background: #222; display: flex; align-items: center; justify-content: center; }
+        .stream-card .card-thumb-placeholder svg { width: 32px; height: 32px; opacity: 0.4; }
+        .stream-card .card-title { font-size: 14px; font-weight: bold; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .stream-card .card-status { font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 10px; display: inline-block; }
+        .status-pending { background: #555; color: #ccc; }
+        .status-live { background: #e94560; color: #fff; }
+        .status-ended { background: #4ecdc4; color: #1a1a2e; }
     </style>
 </head>
 <body>
@@ -89,6 +100,14 @@
                 <button class="danger" id="btn-stop" onclick="stopStreaming()" disabled>Stop</button>
             </div>
             <video id="preview" autoplay muted playsinline></video>
+        </div>
+
+        <!-- My Streams Section -->
+        <div class="section disabled" id="my-streams-section">
+            <h2>My Streams</h2>
+            <div id="my-streams-grid" class="streams-grid">
+                <div class="streams-empty">Login to see your streams</div>
+            </div>
         </div>
 
         <div class="status" id="log">Ready. Please login or register first.</div>
@@ -177,6 +196,7 @@
 
                 document.getElementById('stream-section').classList.remove('disabled');
                 log('Logged in as ' + currentUser.email);
+                fetchMyStreams();
             } catch (e) {
                 log('Auth error: ' + e.message);
             }
@@ -226,6 +246,7 @@
                 document.getElementById('streaming-section').classList.remove('disabled');
 
                 log('Stream created: ' + currentStreamKey);
+                fetchMyStreams();
 
                 // Start camera preview
                 localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -306,6 +327,50 @@
             document.getElementById('btn-start').disabled = false;
             document.getElementById('btn-stop').disabled = true;
             log('Streaming stopped.');
+        }
+
+        function escapeHtml(str) {
+            var div = document.createElement('div');
+            div.appendChild(document.createTextNode(str));
+            return div.innerHTML;
+        }
+
+        function thumbnailHtml(url) {
+            if (url) {
+                return '<img class="card-thumb" src="' + escapeHtml(url) + '" alt="thumbnail" />';
+            }
+            return '<div class="card-thumb-placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg></div>';
+        }
+
+        function renderMyStreams(streams) {
+            var grid = document.getElementById('my-streams-grid');
+            if (!streams || streams.length === 0) {
+                grid.innerHTML = '<div class="streams-empty">No streams yet</div>';
+                return;
+            }
+            grid.innerHTML = streams.map(function(s) {
+                var title = s.title || 'Untitled';
+                var statusClass = 'status-' + s.status.toLowerCase();
+                var statusLabel = s.status.charAt(0).toUpperCase() + s.status.slice(1);
+                return '<div class="stream-card">' +
+                    thumbnailHtml(s.thumbnail_url) +
+                    '<div class="card-title">' + escapeHtml(title) + '</div>' +
+                    '<span class="card-status ' + statusClass + '">' + statusLabel + '</span>' +
+                    '</div>';
+            }).join('');
+        }
+
+        async function fetchMyStreams() {
+            if (!accessToken) return;
+            try {
+                var res = await fetch(apiUrl() + '/v1/streams', { headers: authHeaders() });
+                if (!res.ok) return;
+                var json = await res.json();
+                renderMyStreams(json.data);
+                document.getElementById('my-streams-section').classList.remove('disabled');
+            } catch (e) {
+                // silently ignore
+            }
         }
     </script>
 </body>
