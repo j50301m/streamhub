@@ -98,6 +98,7 @@
             <div class="controls">
                 <button class="primary" id="btn-start" onclick="startStreaming()">Start Streaming</button>
                 <button class="danger" id="btn-stop" onclick="stopStreaming()" disabled>Stop</button>
+                <span id="viewer-count" style="display:none; font-size:13px; color:#4ecca3; margin-left:10px;"></span>
             </div>
             <video id="preview" autoplay muted playsinline></video>
         </div>
@@ -123,6 +124,9 @@
         let localStream = null;
         let authMode = 'login';
         let thumbnailInterval = null;
+        let ws = null;
+        let wsReconnectTimer = null;
+        let isStreaming = false;
 
         // Detect environment: if served via nginx (port 3000), use proxy paths
         // Otherwise (direct file open or other port), use direct localhost URLs
@@ -304,9 +308,26 @@
                 const answerSdp = await res.text();
                 await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
+                pc.onconnectionstatechange = function() {
+                    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                        log('WebRTC disconnected, reconnecting in 3s...');
+                        setTimeout(async function() {
+                            if (isStreaming && currentStreamId) {
+                                await startStreaming();
+                            }
+                        }, 3000);
+                    }
+                };
+
                 document.getElementById('btn-start').disabled = true;
                 document.getElementById('btn-stop').disabled = false;
+                isStreaming = true;
                 log('Streaming live!');
+
+                // Subscribe to viewer count via WS
+                if (ws && ws.readyState === WebSocket.OPEN && currentStreamId) {
+                    ws.send(JSON.stringify({ action: 'subscribe', stream_id: currentStreamId }));
+                }
 
                 // Start periodic canvas thumbnail capture (every 30s)
                 startThumbnailCapture();
@@ -349,6 +370,12 @@
 
         function stopStreaming() {
             stopThumbnailCapture();
+            isStreaming = false;
+            // Unsubscribe from viewer count
+            if (ws && ws.readyState === WebSocket.OPEN && currentStreamId) {
+                ws.send(JSON.stringify({ action: 'unsubscribe', stream_id: currentStreamId }));
+            }
+            updateViewerCountDisplay(0);
             if (pc) { pc.close(); pc = null; }
             if (localStream) {
                 localStream.getTracks().forEach(t => t.stop());
@@ -438,6 +465,76 @@
                 // silently ignore
             }
         }
+
+        // --- WebSocket for viewer count + reconnect ---
+        function wsUrl() {
+            var loc = window.location;
+            if (loc.protocol === 'http:' || loc.protocol === 'https:') {
+                var proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+                return proto + '//' + loc.host + '/ws';
+            }
+            return 'ws://localhost:3000/ws';
+        }
+
+        function connectWs() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                return;
+            }
+            ws = new WebSocket(wsUrl());
+            ws.onopen = function() {
+                log('WebSocket connected');
+                // Subscribe to current stream if streaming
+                if (currentStreamId) {
+                    ws.send(JSON.stringify({ action: 'subscribe', stream_id: currentStreamId }));
+                }
+            };
+            ws.onmessage = function(e) {
+                try {
+                    var msg = JSON.parse(e.data);
+                    switch (msg.type) {
+                        case 'viewer_count':
+                            if (msg.stream_id === currentStreamId) {
+                                updateViewerCountDisplay(msg.count);
+                            }
+                            break;
+                        case 'reconnect':
+                            handleReconnect(msg);
+                            break;
+                    }
+                } catch (err) {
+                    // ignore parse errors
+                }
+            };
+            ws.onclose = function() {
+                wsReconnectTimer = setTimeout(connectWs, 3000);
+            };
+            ws.onerror = function() {
+                // onclose will fire after onerror
+            };
+        }
+
+        function updateViewerCountDisplay(count) {
+            var el = document.getElementById('viewer-count');
+            if (el) {
+                el.textContent = count + ' watching';
+                el.style.display = count > 0 ? 'inline-block' : 'none';
+            }
+        }
+
+        function handleReconnect(msg) {
+            if (!currentStreamId || !isStreaming) return;
+            if (msg.stream_ids && msg.stream_ids.includes(currentStreamId)) {
+                log('Received reconnect event. Reconnecting in 3s...');
+                setTimeout(async function() {
+                    if (isStreaming && currentStreamId) {
+                        await startStreaming();
+                    }
+                }, 3000);
+            }
+        }
+
+        // Connect WebSocket on page load
+        connectWs();
     </script>
 </body>
 </html>

@@ -37,6 +37,7 @@ auth = { workspace = true }
 transcoder = { workspace = true }
 storage = { workspace = true }
 deadpool-redis = { workspace = true }
+reqwest = { workspace = true }
 base64 = "0.22"
 tokio-util = { workspace = true }
 tempfile = "3"

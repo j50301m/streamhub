@@ -56,6 +56,9 @@ pub struct AppConfig {
     #[env("REDIS_URL", default = "redis://localhost:6379")]
     pub redis_url: String,
 
+    #[env("VIEWER_COUNT_INTERVAL_SECS", default = "10")]
+    pub viewer_count_interval_secs: u64,
+
     /// JSON array of MediaMTX instances.
     /// Example: '[{"name":"mtx-1","internal_api":"http://mtx-1:9997","public_whip":"http://localhost:8889","public_whep":"http://localhost:8889","public_hls":"http://localhost:8888"}]'
     #[env("MEDIAMTX_INSTANCES", default = "")]

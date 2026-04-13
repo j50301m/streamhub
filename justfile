@@ -40,4 +40,8 @@ down:
 
 down-all: down down-obs
 
+drain mtx:
+    curl -s -X POST "http://localhost:8080/internal/mtx/drain?mtx={{mtx}}"
+    @echo "Draining {{mtx}}... clients will reconnect automatically"
+
 check-all: check check-docker

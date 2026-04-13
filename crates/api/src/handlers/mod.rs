@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod drain;
 pub mod health;
 pub mod mediamtx_auth;
 pub mod metrics;
@@ -7,3 +8,4 @@ pub mod recording;
 pub mod streams;
 pub mod thumbnail;
 pub mod transcoder_webhook;
+pub mod ws;

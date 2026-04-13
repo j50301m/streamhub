@@ -28,10 +28,10 @@ pub fn parse_mtx_instances(json: &str) -> Vec<MtxInstance> {
 
 /// Select the healthiest MediaMTX instance with the lowest stream count.
 ///
-/// 1. Filter instances where `mtx:{name}:healthy` == "true"
+/// 1. Filter instances where `mtx:{name}:status` == "healthy"
 /// 2. For each healthy instance, read `mtx:{name}:stream_count` (default 0)
 /// 3. Return the instance with the lowest count
-/// 4. If all unhealthy, return an error
+/// 4. If all unhealthy/draining/missing, return an error
 #[tracing::instrument(skip(cache, instances))]
 pub async fn select_instance(
     cache: &dyn CacheStore,
@@ -40,11 +40,9 @@ pub async fn select_instance(
     let mut best: Option<(MtxInstance, i64)> = None;
 
     for inst in instances {
-        let healthy_key = format!("mtx:{}:healthy", inst.name);
-        let is_healthy = cache.get(&healthy_key).await?;
-
-        if is_healthy.as_deref() != Some("true") {
-            tracing::debug!(name = %inst.name, "Instance not healthy, skipping");
+        let status = cache.get(&format!("mtx:{}:status", inst.name)).await?;
+        if status.as_deref() != Some("healthy") {
+            tracing::debug!(name = %inst.name, status = ?status, "Instance not healthy, skipping");
             continue;
         }
 
@@ -232,11 +230,11 @@ impl HealthChecker {
             };
 
             if healthy {
-                // Reset failure count and mark healthy
+                // Reset failure count and mark healthy (with TTL so it auto-expires to missing = unhealthy)
                 self.failure_counts.remove(&inst.name);
                 if let Err(e) = self
                     .cache
-                    .set(&format!("mtx:{}:healthy", inst.name), "true", Some(30))
+                    .set(&format!("mtx:{}:status", inst.name), "healthy", Some(30))
                     .await
                 {
                     tracing::error!(name = %inst.name, error = %e, "Failed to set health status");
@@ -248,6 +246,14 @@ impl HealthChecker {
 
                 if *count == 3 {
                     tracing::error!(name = %inst.name, "MTX reached failure threshold (3), triggering cleanup");
+                    // Mark as unhealthy explicitly (no TTL)
+                    if let Err(e) = self
+                        .cache
+                        .set(&format!("mtx:{}:status", inst.name), "unhealthy", None)
+                        .await
+                    {
+                        tracing::error!(name = %inst.name, error = %e, "Failed to set unhealthy status");
+                    }
                     newly_failed.push(inst.clone());
                 }
             }

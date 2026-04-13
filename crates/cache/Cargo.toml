@@ -9,3 +9,5 @@ async-trait = "0.1"
 anyhow = { workspace = true }
 deadpool-redis = { workspace = true }
 tokio = { workspace = true }
+tokio-stream = "0.1"
+tracing = { workspace = true }

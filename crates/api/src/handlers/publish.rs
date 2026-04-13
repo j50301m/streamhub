@@ -93,7 +93,7 @@ pub(crate) async fn publish_hook(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // Redis: record or remove stream→MTX mapping
+    // Redis: record or remove stream→MTX mapping + stream_key→id reverse lookup
     let stream_id_str = stream_id.to_string();
     match payload.action.as_str() {
         "publish" => {
@@ -105,6 +105,18 @@ pub(crate) async fn publish_hook(
                     tracing::error!(error = %e, "Failed to record stream→MTX mapping");
                 }
             }
+            // Store reverse mapping for viewer count lookup
+            if let Err(e) = state
+                .cache
+                .set(
+                    &format!("stream_key:{}:id", stream_key),
+                    &stream_id_str,
+                    None,
+                )
+                .await
+            {
+                tracing::error!(error = %e, "Failed to store stream_key→id mapping");
+            }
         }
         "unpublish" => {
             if let Err(e) =
@@ -112,8 +124,18 @@ pub(crate) async fn publish_hook(
             {
                 tracing::error!(error = %e, "Failed to remove stream→MTX mapping");
             }
+            // Remove reverse mapping
+            let _ = state
+                .cache
+                .del(&format!("stream_key:{}:id", stream_key))
+                .await;
         }
         _ => {}
+    }
+
+    // Publish updated live streams list via Redis PubSub
+    if let Err(e) = publish_live_streams_event(&state).await {
+        tracing::error!(error = %e, "Failed to publish live_streams event");
     }
 
     // Manage periodic thumbnail capture task
@@ -230,6 +252,48 @@ async fn cancel_thumbnail_task(state: &AppState, stream_id: Uuid) {
         token.cancel();
         tracing::info!(stream_id = %stream_id, "Cancelled thumbnail capture task");
     }
+}
+
+/// Publish the current live streams list via Redis PubSub so all API instances push to WS clients.
+async fn publish_live_streams_event(state: &AppState) -> Result<(), anyhow::Error> {
+    let live_models = state.uow.stream_repo().list_live().await?;
+    let mut data = Vec::with_capacity(live_models.len());
+
+    for m in live_models {
+        let stream_id_str = m.id.to_string();
+        let urls = mediamtx::resolve_stream_urls(
+            state.cache.as_ref(),
+            &state.mtx_instances,
+            &stream_id_str,
+            &m.stream_key,
+        )
+        .await
+        .unwrap_or(None);
+
+        let (whep, hls) = match urls {
+            Some((w, h)) => (Some(w), Some(h)),
+            None => (None, None),
+        };
+
+        data.push(crate::ws::types::LiveStreamData {
+            id: m.id,
+            title: m.title,
+            stream_key: m.stream_key,
+            status: serde_json::to_value(&m.status)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_else(|| "unknown".to_string()),
+            thumbnail_url: m.thumbnail_url,
+            started_at: m.started_at,
+            viewer_count: 0,
+            urls: crate::ws::types::LiveStreamUrls { whep, hls },
+        });
+    }
+
+    let event = crate::ws::types::RedisEvent::LiveStreams { data };
+    let json = serde_json::to_string(&event)?;
+    state.pubsub.publish("streamhub:events", &json).await?;
+    Ok(())
 }
 
 /// Scan filesystem for MP4 recordings, transcode to HLS, optionally upload to GCS.
@@ -501,6 +565,7 @@ mod tests {
             metrics: test_metrics(),
             redis_pool: crate::tests::test_redis_pool(),
             cache: std::sync::Arc::new(cache::InMemoryCache::new()),
+            pubsub: crate::tests::test_pubsub(),
             live_tasks: Default::default(),
             mtx_instances: vec![],
         };
@@ -545,6 +610,7 @@ mod tests {
             metrics: test_metrics(),
             redis_pool: crate::tests::test_redis_pool(),
             cache: std::sync::Arc::new(cache::InMemoryCache::new()),
+            pubsub: crate::tests::test_pubsub(),
             live_tasks: Default::default(),
             mtx_instances: vec![],
         };
@@ -579,6 +645,7 @@ mod tests {
             metrics: test_metrics(),
             redis_pool: crate::tests::test_redis_pool(),
             cache: std::sync::Arc::new(cache::InMemoryCache::new()),
+            pubsub: crate::tests::test_pubsub(),
             live_tasks: Default::default(),
             mtx_instances: vec![],
         };
