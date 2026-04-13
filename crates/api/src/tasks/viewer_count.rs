@@ -82,7 +82,7 @@ async fn poll_viewer_counts(
             Err(_) => continue,
         };
 
-        // MediaMTX v3 response: { "items": [{ "name": "stream-key", "readers": { "count": N }, ... }] }
+        // MediaMTX v3 response: { "items": [{ "name": "stream-key", "readers": [{"type": "..."}, ...], ... }] }
         if let Some(items) = body.get("items").and_then(|v| v.as_array()) {
             for item in items {
                 let path_name = match item.get("name").and_then(|v| v.as_str()) {
@@ -93,9 +93,15 @@ async fn poll_viewer_counts(
                 let reader_count = item
                     .get("readers")
                     .and_then(|r| {
-                        r.get("count")
-                            .and_then(|c| c.as_u64())
-                            .or_else(|| r.as_u64())
+                        // MediaMTX v3: readers is an array of reader objects
+                        if let Some(arr) = r.as_array() {
+                            Some(arr.len() as u64)
+                        } else if let Some(obj) = r.as_object() {
+                            // Fallback: {"readers": {"count": N}}
+                            obj.get("count").and_then(|c| c.as_u64())
+                        } else {
+                            r.as_u64()
+                        }
                     })
                     .unwrap_or(0) as u32;
 
