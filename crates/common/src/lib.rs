@@ -1,10 +1,10 @@
 pub mod config;
 pub mod error;
-pub mod state;
 
+pub use cache::{CacheStore, InMemoryCache, RedisCacheStore};
 pub use config::AppConfig;
 pub use error::AppError;
-pub use state::{CacheStore, InMemoryCache, InMemoryPubSub, PubSub};
+pub use mediamtx::{MtxInstance, parse_mtx_instances};
 
 use metrics_exporter_prometheus::PrometheusHandle;
 use repo::UnitOfWork;
@@ -24,12 +24,13 @@ pub struct AppState {
     pub storage: Option<Arc<dyn ObjectStorage>>,
     pub metrics: PrometheusHandle,
     pub redis_pool: deadpool_redis::Pool,
-    pub pubsub: Arc<dyn PubSub>,
     pub cache: Arc<dyn CacheStore>,
     /// Active live thumbnail capture tasks. Key = stream_id, Value = CancellationToken.
     /// Periodically captures HLS frames as thumbnails during live streams.
     /// Tokens are cancelled on unpublish or server shutdown.
     pub live_tasks: Arc<tokio::sync::Mutex<HashMap<Uuid, CancellationToken>>>,
+    /// Registered MediaMTX instances for routing.
+    pub mtx_instances: Vec<MtxInstance>,
 }
 
 /// Initialize database connection pool with statement_timeout.

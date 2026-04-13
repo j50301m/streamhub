@@ -14,9 +14,6 @@ pub struct AppConfig {
     #[env("PORT", default = "8080")]
     pub port: u16,
 
-    #[env("MEDIAMTX_URL", default = "http://localhost:9997")]
-    pub mediamtx_url: String,
-
     #[env("JWT_SECRET", default = "dev-secret-change-in-production")]
     pub jwt_secret: String,
 
@@ -61,6 +58,11 @@ pub struct AppConfig {
 
     #[env("REDIS_URL", default = "redis://localhost:6379")]
     pub redis_url: String,
+
+    /// JSON array of MediaMTX instances.
+    /// Example: '[{"name":"mtx-1","internal_api":"http://mtx-1:9997","public_whip":"http://localhost:8889","public_whep":"http://localhost:8889","public_hls":"http://localhost:8888"}]'
+    #[env("MEDIAMTX_INSTANCES", default = "")]
+    pub mediamtx_instances_json: String,
 }
 
 impl AppConfig {

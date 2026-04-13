@@ -43,9 +43,9 @@ async fn register_success() {
         storage: None,
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
-        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
-        cache: std::sync::Arc::new(common::InMemoryCache::new()),
+        cache: std::sync::Arc::new(cache::InMemoryCache::new()),
         live_tasks: Default::default(),
+        mtx_instances: vec![],
     };
 
     let req = Request::builder()
@@ -83,9 +83,9 @@ async fn register_duplicate_email_returns_409() {
         storage: None,
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
-        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
-        cache: std::sync::Arc::new(common::InMemoryCache::new()),
+        cache: std::sync::Arc::new(cache::InMemoryCache::new()),
         live_tasks: Default::default(),
+        mtx_instances: vec![],
     };
 
     let req = Request::builder()
@@ -119,9 +119,9 @@ async fn login_success() {
         storage: None,
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
-        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
-        cache: std::sync::Arc::new(common::InMemoryCache::new()),
+        cache: std::sync::Arc::new(cache::InMemoryCache::new()),
         live_tasks: Default::default(),
+        mtx_instances: vec![],
     };
 
     let req = Request::builder()
@@ -157,9 +157,9 @@ async fn login_wrong_password_returns_401() {
         storage: None,
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
-        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
-        cache: std::sync::Arc::new(common::InMemoryCache::new()),
+        cache: std::sync::Arc::new(cache::InMemoryCache::new()),
         live_tasks: Default::default(),
+        mtx_instances: vec![],
     };
 
     let req = Request::builder()
@@ -191,9 +191,9 @@ async fn login_user_not_found_returns_401() {
         storage: None,
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
-        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
-        cache: std::sync::Arc::new(common::InMemoryCache::new()),
+        cache: std::sync::Arc::new(cache::InMemoryCache::new()),
         live_tasks: Default::default(),
+        mtx_instances: vec![],
     };
 
     let _ = JWT_SECRET; // suppress unused warning

@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile.mediamtx
     container_name: streamhub-mtx-1
     hostname: mtx-1
+    environment:
+      MTX_NAME: mtx-1
     ports:
       - "8554:8554"       # RTSP
       - "8888:8888"       # HLS
@@ -20,6 +22,8 @@ services:
       dockerfile: Dockerfile.mediamtx
     container_name: streamhub-mtx-2
     hostname: mtx-2
+    environment:
+      MTX_NAME: mtx-2
     ports:
       - "8564:8554"
       - "8898:8888"
@@ -35,6 +39,8 @@ services:
       dockerfile: Dockerfile.mediamtx
     container_name: streamhub-mtx-3
     hostname: mtx-3
+    environment:
+      MTX_NAME: mtx-3
     ports:
       - "8574:8554"
       - "8908:8888"

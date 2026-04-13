@@ -45,14 +45,15 @@ paths:
   # Only accept UUID v4 format stream keys
   "~^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$":
     # Webhook when stream becomes ready (published)
+    # __MTX_NAME__ is replaced at container startup by the entrypoint script
     runOnReady: >
-      curl -s -X POST http://api:8080/internal/hooks/publish
+      curl -s -X POST "http://api:8080/internal/hooks/publish?mtx=__MTX_NAME__"
       -H "Content-Type: application/json"
       -d '{"stream_key":"$MTX_PATH","action":"publish"}'
 
     # Webhook when stream becomes unavailable (unpublished)
     runOnNotReady: >
-      curl -s -X POST http://api:8080/internal/hooks/publish
+      curl -s -X POST "http://api:8080/internal/hooks/publish?mtx=__MTX_NAME__"
       -H "Content-Type: application/json"
       -d '{"stream_key":"$MTX_PATH","action":"unpublish"}'
 

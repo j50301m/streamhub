@@ -29,6 +29,8 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 cfgloader_rs = { workspace = true }
 common = { workspace = true }
+cache = { workspace = true }
+mediamtx = { workspace = true }
 entity = { workspace = true }
 repo = { workspace = true }
 auth = { workspace = true }

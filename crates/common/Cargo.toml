@@ -8,6 +8,8 @@ rust-version.workspace = true
 axum = { workspace = true }
 sea-orm = { workspace = true }
 repo = { workspace = true }
+cache = { workspace = true }
+mediamtx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -21,4 +23,3 @@ storage = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 tokio-util = { workspace = true }
 deadpool-redis = { workspace = true }
-async-trait = "0.1"

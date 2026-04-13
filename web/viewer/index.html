@@ -82,10 +82,9 @@
     <script>
         let pc = null;
         let hls = null;
-        let mediamtxBase = '';
-        let hlsBase = '';
-        let vodBase = '';
         let refreshInterval = null;
+        // Currently selected stream data (from API) for WHEP/HLS URLs
+        let currentStreamData = null;
 
         // Detect environment: if served via nginx (port 3000), use proxy paths
         // Otherwise (direct file open or other port), use direct localhost URLs
@@ -93,14 +92,8 @@
             const loc = window.location;
             if (loc.protocol === 'http:' || loc.protocol === 'https:') {
                 document.getElementById('api-url').value = loc.origin + '/api';
-                mediamtxBase = loc.origin + '/mediamtx';
-                hlsBase = loc.origin + '/hls';
-                vodBase = loc.origin + '/vod';
             } else {
                 document.getElementById('api-url').value = 'http://localhost:8080';
-                mediamtxBase = 'http://localhost:8889';
-                hlsBase = 'http://localhost:8888';
-                vodBase = 'http://localhost:3000/vod';
             }
         }
         detectUrls();
@@ -136,8 +129,12 @@
             return '<div class="card-thumb-placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg></div>';
         }
 
+        // Cache live streams data for URL resolution
+        let liveStreamsCache = [];
+
         function renderLiveStreams(streams) {
             const grid = document.getElementById('live-grid');
+            liveStreamsCache = streams || [];
             if (!streams || streams.length === 0) {
                 grid.innerHTML = '<div class="live-empty">No live streams right now</div>';
                 return;
@@ -178,6 +175,8 @@
 
         function selectStream(streamKey) {
             document.getElementById('stream-key').value = streamKey;
+            // Find the stream in cache to get its URLs
+            currentStreamData = liveStreamsCache.find(function(s) { return s.stream_key === streamKey; }) || null;
             watchWHEP();
         }
 
@@ -296,6 +295,26 @@
             const streamKey = document.getElementById('stream-key').value.trim();
             if (!streamKey) { log('Please enter a stream key.'); return; }
 
+            // Get WHEP URL from API if not already cached
+            var whepUrl = currentStreamData && currentStreamData.urls && currentStreamData.urls.whep;
+            if (!whepUrl) {
+                // Fetch stream details from API to get the WHEP URL
+                try {
+                    var apiUrl = document.getElementById('api-url').value;
+                    // Find stream by key from live streams list
+                    var found = liveStreamsCache.find(function(s) { return s.stream_key === streamKey; });
+                    if (found && found.urls && found.urls.whep) {
+                        whepUrl = found.urls.whep;
+                    } else {
+                        log('Cannot find WHEP URL for this stream. Make sure the stream is live.');
+                        return;
+                    }
+                } catch (e) {
+                    log('Error resolving WHEP URL: ' + e.message);
+                    return;
+                }
+            }
+
             try {
                 pc = new RTCPeerConnection({
                     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
@@ -321,7 +340,6 @@
                 });
 
                 log('Sending WHEP offer...');
-                const whepUrl = mediamtxBase + '/' + streamKey + '/whep';
                 const res = await fetch(whepUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/sdp' },
@@ -349,7 +367,17 @@
             const streamKey = document.getElementById('stream-key').value.trim();
             if (!streamKey) { log('Please enter a stream key.'); return; }
 
-            const hlsUrl = hlsBase + '/' + streamKey + '/index.m3u8';
+            // Get HLS URL from API
+            var hlsUrl = currentStreamData && currentStreamData.urls && currentStreamData.urls.hls;
+            if (!hlsUrl) {
+                var found = liveStreamsCache.find(function(s) { return s.stream_key === streamKey; });
+                if (found && found.urls && found.urls.hls) {
+                    hlsUrl = found.urls.hls;
+                } else {
+                    log('Cannot find HLS URL for this stream. Make sure the stream is live.');
+                    return;
+                }
+            }
             const video = document.getElementById('player');
 
             if (Hls.isSupported()) {
