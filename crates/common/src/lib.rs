@@ -21,7 +21,7 @@ use uuid::Uuid;
 pub struct AppState {
     pub uow: UnitOfWork,
     pub config: AppConfig,
-    pub storage: Option<Arc<dyn ObjectStorage>>,
+    pub storage: Arc<dyn ObjectStorage>,
     pub metrics: PrometheusHandle,
     pub redis_pool: deadpool_redis::Pool,
     pub cache: Arc<dyn CacheStore>,

@@ -5,7 +5,6 @@ use common::{AppError, AppState};
 use entity::stream;
 use sea_orm::Set;
 use serde::Serialize;
-use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::middleware::CurrentUser;
@@ -48,38 +47,24 @@ pub(crate) async fn upload_thumbnail(
     }
 
     let stream_key = &existing.stream_key;
-    let thumbnail_url = if let Some(store) = &state.storage {
-        // GCS mode: upload bytes to storage
-        let tmp_dir = tempfile::tempdir().map_err(|e| {
-            tracing::error!(error = %e, "Failed to create temp dir");
-            AppError::Internal("failed to create temp dir".to_string())
-        })?;
-        let tmp_path = tmp_dir.path().join("live-thumb.jpg");
-        tokio::fs::write(&tmp_path, &body).await.map_err(|e| {
-            tracing::error!(error = %e, "Failed to write temp file");
-            AppError::Internal("failed to write temp file".to_string())
-        })?;
+    let store = &state.storage;
 
-        let key = format!("streams/{}/live-thumb.jpg", stream_key);
-        store.upload_file(&tmp_path, &key).await.map_err(|e| {
-            tracing::error!(error = %e, "Failed to upload thumbnail to storage");
-            AppError::Internal("failed to upload thumbnail".to_string())
-        })?;
-        store.public_url(&key)
-    } else {
-        // Local mode: write to thumbnails directory
-        let thumb_dir = PathBuf::from(&state.config.thumbnails_path).join(stream_key);
-        tokio::fs::create_dir_all(&thumb_dir).await.map_err(|e| {
-            tracing::error!(error = %e, "Failed to create thumbnail dir");
-            AppError::Internal("failed to create thumbnail dir".to_string())
-        })?;
-        let thumb_path = thumb_dir.join("live-thumb.jpg");
-        tokio::fs::write(&thumb_path, &body).await.map_err(|e| {
-            tracing::error!(error = %e, "Failed to write thumbnail file");
-            AppError::Internal("failed to write thumbnail".to_string())
-        })?;
-        format!("/thumbnails/{}/live-thumb.jpg", stream_key)
-    };
+    let tmp_dir = tempfile::tempdir().map_err(|e| {
+        tracing::error!(error = %e, "Failed to create temp dir");
+        AppError::Internal("failed to create temp dir".to_string())
+    })?;
+    let tmp_path = tmp_dir.path().join("live-thumb.jpg");
+    tokio::fs::write(&tmp_path, &body).await.map_err(|e| {
+        tracing::error!(error = %e, "Failed to write temp file");
+        AppError::Internal("failed to write temp file".to_string())
+    })?;
+
+    let key = format!("streams/{}/live-thumb.jpg", stream_key);
+    store.upload_file(&tmp_path, &key).await.map_err(|e| {
+        tracing::error!(error = %e, "Failed to upload thumbnail to storage");
+        AppError::Internal("failed to upload thumbnail".to_string())
+    })?;
+    let thumbnail_url = store.public_url(&key);
 
     let active = stream::ActiveModel {
         id: Set(id),

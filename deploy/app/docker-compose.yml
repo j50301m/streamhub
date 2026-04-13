@@ -13,7 +13,9 @@ services:
 
 volumes:
   recordings:
+    external: true
   thumbnails:
+    external: true
 
 networks:
   default:

@@ -26,9 +26,6 @@ pub struct AppConfig {
     #[env("THUMBNAILS_PATH", default = "/thumbnails")]
     pub thumbnails_path: String,
 
-    #[env("STORAGE_ENABLED", default = "false")]
-    pub storage_enabled: String,
-
     #[env("GCS_BUCKET", default = "streamhub-recordings-dev")]
     pub gcs_bucket: String,
 
@@ -66,10 +63,6 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn storage_enabled(&self) -> bool {
-        self.storage_enabled.eq_ignore_ascii_case("true") || self.storage_enabled == "1"
-    }
-
     pub fn transcoder_enabled(&self) -> bool {
         self.transcoder_enabled.eq_ignore_ascii_case("true") || self.transcoder_enabled == "1"
     }

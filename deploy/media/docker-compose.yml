@@ -52,6 +52,7 @@ services:
 
 volumes:
   recordings:
+    external: true
 
 networks:
   default:

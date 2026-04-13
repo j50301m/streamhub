@@ -56,7 +56,7 @@ async fn recording_hook_saves_segment() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
-        storage: None,
+        storage: super::test_storage(),
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
         cache: std::sync::Arc::new(cache::InMemoryCache::new()),
@@ -90,7 +90,7 @@ async fn recording_hook_stream_not_found_returns_404() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
-        storage: None,
+        storage: super::test_storage(),
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
         cache: std::sync::Arc::new(cache::InMemoryCache::new()),

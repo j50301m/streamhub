@@ -9,7 +9,6 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use storage::ObjectStorage;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -194,17 +193,13 @@ async fn spawn_thumbnail_task(
 
                     match transcoder::capture_hls_thumbnail(&hls_url, &thumb_path).await {
                         Ok(_) => {
-                            let thumbnail_url = if let Some(store) = &storage {
-                                let key = format!("streams/{}/live-thumb.jpg", stream_key);
-                                match store.upload_file(&thumb_path, &key).await {
-                                    Ok(_) => store.public_url(&key),
-                                    Err(e) => {
-                                        tracing::warn!(error = %e, "Failed to upload thumbnail to storage");
-                                        continue;
-                                    }
+                            let key = format!("streams/{}/live-thumb.jpg", stream_key);
+                            let thumbnail_url = match storage.upload_file(&thumb_path, &key).await {
+                                Ok(_) => storage.public_url(&key),
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "Failed to upload thumbnail to storage");
+                                    continue;
                                 }
-                            } else {
-                                format!("/thumbnails/{}/live-thumb.jpg", stream_key)
                             };
 
                             let active = stream::ActiveModel {
@@ -244,7 +239,7 @@ async fn run_transcode(
     recordings_path: &str,
     stream_id: Uuid,
     stream_key: &str,
-    storage: Option<Arc<dyn ObjectStorage>>,
+    storage: Arc<dyn storage::ObjectStorage>,
     config: &common::AppConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let stream_dir = PathBuf::from(recordings_path).join(stream_key);
@@ -278,15 +273,7 @@ async fn run_transcode(
     );
 
     if config.transcoder_enabled() {
-        run_transcode_gcp(
-            &uow,
-            stream_id,
-            stream_key,
-            &input_mp4,
-            storage.as_deref(),
-            config,
-        )
-        .await?;
+        run_transcode_gcp(&uow, stream_id, stream_key, &input_mp4, &*storage, config).await?;
     } else {
         run_transcode_local(
             &uow,
@@ -294,7 +281,7 @@ async fn run_transcode(
             stream_key,
             &input_mp4,
             &output_dir,
-            storage.as_deref(),
+            &*storage,
         )
         .await?;
     }
@@ -321,7 +308,7 @@ async fn scan_mp4_files(
     Ok(files)
 }
 
-/// Local ffmpeg transcode + optional GCS upload.
+/// Local ffmpeg transcode + GCS upload.
 #[tracing::instrument(skip(uow, storage), fields(%stream_id, %stream_key))]
 async fn run_transcode_local(
     uow: &repo::UnitOfWork,
@@ -329,22 +316,17 @@ async fn run_transcode_local(
     stream_key: &str,
     input_mp4: &Path,
     output_dir: &Path,
-    storage: Option<&dyn ObjectStorage>,
+    storage: &dyn storage::ObjectStorage,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match transcoder::transcode_to_hls(input_mp4, output_dir).await {
         Ok(_) => {
-            let hls_url = if let Some(store) = storage {
-                let gcs_prefix = format!("streams/{}/hls", stream_key);
-                store
-                    .upload_dir(output_dir, &gcs_prefix)
-                    .await
-                    .map_err(|e| format!("GCS upload failed: {e}"))?;
-                let url = store.public_url(&format!("{}/index.m3u8", gcs_prefix));
-                tracing::info!(stream_id = %stream_id, %url, "HLS uploaded to GCS");
-                url
-            } else {
-                format!("/vod/{stream_key}/hls/index.m3u8")
-            };
+            let gcs_prefix = format!("streams/{}/hls", stream_key);
+            storage
+                .upload_dir(output_dir, &gcs_prefix)
+                .await
+                .map_err(|e| format!("GCS upload failed: {e}"))?;
+            let hls_url = storage.public_url(&format!("{}/index.m3u8", gcs_prefix));
+            tracing::info!(stream_id = %stream_id, %hls_url, "HLS uploaded to storage");
 
             // Extract thumbnail from the input MP4
             let thumb_path = output_dir.parent().unwrap_or(output_dir).join("thumb.jpg");
@@ -354,14 +336,10 @@ async fn run_transcode_local(
                     return None;
                 }
 
-                let Some(store) = storage else {
-                    return Some(format!("/vod/{stream_key}/thumb.jpg"));
-                };
-
                 let thumb_key = format!("streams/{}/thumb.jpg", stream_key);
-                match store.upload_file(&thumb_path, &thumb_key).await {
+                match storage.upload_file(&thumb_path, &thumb_key).await {
                     Ok(_) => {
-                        let url = store.public_url(&thumb_key);
+                        let url = storage.public_url(&thumb_key);
                         tracing::info!(stream_id = %stream_id, %url, "Thumbnail uploaded");
                         Some(url)
                     }
@@ -403,10 +381,10 @@ async fn run_transcode_gcp(
     stream_id: Uuid,
     stream_key: &str,
     input_mp4: &Path,
-    storage: Option<&dyn ObjectStorage>,
+    storage: &dyn storage::ObjectStorage,
     config: &common::AppConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let store = storage.ok_or("GCS storage required for Transcoder API")?;
+    let store = storage;
 
     // Upload raw MP4 to GCS
     let mp4_key = format!("streams/{}/input.mp4", stream_key);
@@ -519,7 +497,7 @@ mod tests {
         let state = AppState {
             uow: UnitOfWork::new(db),
             config: test_config(),
-            storage: None,
+            storage: crate::tests::test_storage(),
             metrics: test_metrics(),
             redis_pool: crate::tests::test_redis_pool(),
             cache: std::sync::Arc::new(cache::InMemoryCache::new()),
@@ -563,7 +541,7 @@ mod tests {
         let state = AppState {
             uow: UnitOfWork::new(db),
             config: test_config(),
-            storage: None,
+            storage: crate::tests::test_storage(),
             metrics: test_metrics(),
             redis_pool: crate::tests::test_redis_pool(),
             cache: std::sync::Arc::new(cache::InMemoryCache::new()),
@@ -597,7 +575,7 @@ mod tests {
         let state = AppState {
             uow: UnitOfWork::new(db),
             config: test_config(),
-            storage: None,
+            storage: crate::tests::test_storage(),
             metrics: test_metrics(),
             redis_pool: crate::tests::test_redis_pool(),
             cache: std::sync::Arc::new(cache::InMemoryCache::new()),
