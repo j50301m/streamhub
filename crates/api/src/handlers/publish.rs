@@ -479,6 +479,9 @@ mod tests {
             config: test_config(),
             storage: None,
             metrics: test_metrics(),
+            redis_pool: crate::tests::test_redis_pool(),
+            pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
+            cache: std::sync::Arc::new(common::InMemoryCache::new()),
             live_tasks: Default::default(),
         };
 
@@ -520,6 +523,9 @@ mod tests {
             config: test_config(),
             storage: None,
             metrics: test_metrics(),
+            redis_pool: crate::tests::test_redis_pool(),
+            pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
+            cache: std::sync::Arc::new(common::InMemoryCache::new()),
             live_tasks: Default::default(),
         };
 
@@ -551,6 +557,9 @@ mod tests {
             config: test_config(),
             storage: None,
             metrics: test_metrics(),
+            redis_pool: crate::tests::test_redis_pool(),
+            pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
+            cache: std::sync::Arc::new(common::InMemoryCache::new()),
             live_tasks: Default::default(),
         };
 

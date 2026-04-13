@@ -9,6 +9,12 @@ use metrics_exporter_prometheus::PrometheusHandle;
 
 const JWT_SECRET: &str = "test-secret";
 
+pub(crate) fn test_redis_pool() -> deadpool_redis::Pool {
+    let cfg = deadpool_redis::Config::from_url("redis://localhost:6379");
+    cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))
+        .expect("failed to create test redis pool")
+}
+
 pub(crate) fn test_metrics() -> PrometheusHandle {
     // Each test needs its own recorder; use a throwaway builder.
     metrics_exporter_prometheus::PrometheusBuilder::new()
@@ -35,6 +41,7 @@ pub(crate) fn test_config() -> AppConfig {
         pubsub_verify_token: String::new(),
         otel_endpoint: "http://localhost:4317".to_string(),
         thumbnail_capture_interval_secs: 60,
+        redis_url: "redis://localhost:6379".to_string(),
     }
 }
 

@@ -1,8 +1,10 @@
 pub mod config;
 pub mod error;
+pub mod state;
 
 pub use config::AppConfig;
 pub use error::AppError;
+pub use state::{CacheStore, InMemoryCache, InMemoryPubSub, PubSub};
 
 use metrics_exporter_prometheus::PrometheusHandle;
 use repo::UnitOfWork;
@@ -21,6 +23,9 @@ pub struct AppState {
     pub config: AppConfig,
     pub storage: Option<Arc<dyn ObjectStorage>>,
     pub metrics: PrometheusHandle,
+    pub redis_pool: deadpool_redis::Pool,
+    pub pubsub: Arc<dyn PubSub>,
+    pub cache: Arc<dyn CacheStore>,
     /// Active live thumbnail capture tasks. Key = stream_id, Value = CancellationToken.
     /// Periodically captures HLS frames as thumbnails during live streams.
     /// Tokens are cancelled on unpublish or server shutdown.

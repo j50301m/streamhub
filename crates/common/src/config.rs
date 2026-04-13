@@ -58,6 +58,9 @@ pub struct AppConfig {
 
     #[env("THUMBNAIL_CAPTURE_INTERVAL_SECS", default = "60")]
     pub thumbnail_capture_interval_secs: u64,
+
+    #[env("REDIS_URL", default = "redis://localhost:6379")]
+    pub redis_url: String,
 }
 
 impl AppConfig {

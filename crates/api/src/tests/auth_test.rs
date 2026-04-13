@@ -42,6 +42,9 @@ async fn register_success() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        redis_pool: super::test_redis_pool(),
+        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
+        cache: std::sync::Arc::new(common::InMemoryCache::new()),
         live_tasks: Default::default(),
     };
 
@@ -79,6 +82,9 @@ async fn register_duplicate_email_returns_409() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        redis_pool: super::test_redis_pool(),
+        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
+        cache: std::sync::Arc::new(common::InMemoryCache::new()),
         live_tasks: Default::default(),
     };
 
@@ -112,6 +118,9 @@ async fn login_success() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        redis_pool: super::test_redis_pool(),
+        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
+        cache: std::sync::Arc::new(common::InMemoryCache::new()),
         live_tasks: Default::default(),
     };
 
@@ -147,6 +156,9 @@ async fn login_wrong_password_returns_401() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        redis_pool: super::test_redis_pool(),
+        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
+        cache: std::sync::Arc::new(common::InMemoryCache::new()),
         live_tasks: Default::default(),
     };
 
@@ -178,6 +190,9 @@ async fn login_user_not_found_returns_401() {
         config: test_config(),
         storage: None,
         metrics: super::test_metrics(),
+        redis_pool: super::test_redis_pool(),
+        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
+        cache: std::sync::Arc::new(common::InMemoryCache::new()),
         live_tasks: Default::default(),
     };
 

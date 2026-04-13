@@ -1,7 +1,7 @@
 use anyhow::Result;
 use axum::Router;
 use cfgloader_rs::FromEnv;
-use common::{AppConfig, AppState};
+use common::{AppConfig, AppState, InMemoryCache, InMemoryPubSub};
 use metrics_exporter_prometheus::PrometheusHandle;
 use opentelemetry_otlp::WithExportConfig;
 use repo::UnitOfWork;
@@ -40,6 +40,7 @@ impl App {
         let prometheus_handle = init_telemetry(&config.otel_endpoint)?;
         let db = init_db(&config).await?;
         let storage = init_storage(&config).await?;
+        let redis_pool = init_redis(&config.redis_url)?;
         let addr = SocketAddr::new(config.host.parse()?, config.port);
 
         let live_tasks = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
@@ -49,6 +50,9 @@ impl App {
             config,
             storage,
             metrics: prometheus_handle,
+            redis_pool,
+            pubsub: Arc::new(InMemoryPubSub::new()),
+            cache: Arc::new(InMemoryCache::new()),
             live_tasks: live_tasks.clone(),
         };
 
@@ -142,6 +146,13 @@ async fn init_db(config: &AppConfig) -> Result<sea_orm::DatabaseConnection> {
     db.get_schema_registry("entity::*").sync(&db).await?;
 
     Ok(db)
+}
+
+fn init_redis(redis_url: &str) -> Result<deadpool_redis::Pool> {
+    tracing::info!("Connecting to Redis...");
+    let cfg = deadpool_redis::Config::from_url(redis_url);
+    let pool = cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))?;
+    Ok(pool)
 }
 
 async fn init_storage(config: &AppConfig) -> Result<Option<Arc<dyn storage::ObjectStorage>>> {
