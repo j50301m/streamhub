@@ -52,6 +52,8 @@ pub fn app_router() -> Router<AppState> {
             "/v1/streams/{id}/recordings",
             get(handlers::streams::list_recordings),
         )
+        // WebSocket
+        .route("/v1/ws", get(handlers::ws::ws_handler))
         // Internal hooks
         .route(
             "/internal/hooks/publish",
@@ -69,4 +71,6 @@ pub fn app_router() -> Router<AppState> {
             "/internal/auth",
             post(handlers::mediamtx_auth::mediamtx_auth),
         )
+        // MTX drain
+        .route("/internal/mtx/drain", post(handlers::drain::drain_handler))
 }

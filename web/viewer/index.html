@@ -36,6 +36,7 @@
         .badge-vod { background: #4ecdc4; color: #1a1a2e; }
         .vod-card:hover { border-color: #4ecdc4; background: #1a2a4e; }
         .live-empty { color: #666; font-size: 14px; padding: 16px 0; }
+        .card-viewers { display: inline-block; font-size: 11px; color: #aaa; margin-left: 6px; }
         .card-thumb { width: 100%; aspect-ratio: 16/9; border-radius: 4px; margin-bottom: 8px; object-fit: cover; background: #222; }
         .card-thumb-placeholder { width: 100%; aspect-ratio: 16/9; border-radius: 4px; margin-bottom: 8px; background: #222; display: flex; align-items: center; justify-content: center; }
         .card-thumb-placeholder svg { width: 32px; height: 32px; opacity: 0.4; }
@@ -82,9 +83,12 @@
     <script>
         let pc = null;
         let hls = null;
-        let refreshInterval = null;
+        let ws = null;
+        let wsReconnectTimer = null;
         // Currently selected stream data (from API) for WHEP/HLS URLs
         let currentStreamData = null;
+        // Currently watching stream ID (for reconnect detection)
+        let currentWatchingStreamId = null;
 
         // Detect environment: if served via nginx (port 3000), use proxy paths
         // Otherwise (direct file open or other port), use direct localhost URLs
@@ -143,9 +147,12 @@
                 var title = s.title || 'Untitled';
                 var shortKey = s.stream_key.substring(0, 8);
                 var ago = s.started_at ? timeAgo(s.started_at) : '';
-                return '<div class="live-card" onclick="selectStream(\'' + s.stream_key + '\')">' +
+                var viewerText = (s.viewer_count !== undefined && s.viewer_count > 0)
+                    ? '<span class="card-viewers">' + s.viewer_count + ' watching</span>'
+                    : '';
+                return '<div class="live-card" data-stream-id="' + s.id + '" onclick="selectStream(\'' + s.stream_key + '\')">' +
                     liveThumbnailHtml(s.thumbnail_url) +
-                    '<span class="card-badge badge-live">LIVE</span>' +
+                    '<span class="card-badge badge-live">LIVE</span>' + viewerText +
                     '<div class="card-title">' + escapeHtml(title) + '</div>' +
                     '<div class="card-key">' + shortKey + '</div>' +
                     '<div class="card-time">' + ago + '</div>' +
@@ -171,6 +178,25 @@
                     '<div class="card-time">' + ago + '</div>' +
                     '</div>';
             }).join('');
+        }
+
+        function updateViewerCount(streamId, count) {
+            // Update in-memory cache
+            var s = liveStreamsCache.find(function(s) { return s.id === streamId; });
+            if (s) s.viewer_count = count;
+            // Update DOM
+            var card = document.querySelector('.live-card[data-stream-id="' + streamId + '"]');
+            if (card) {
+                var el = card.querySelector('.card-viewers');
+                if (el) {
+                    el.textContent = count > 0 ? count + ' watching' : '';
+                } else if (count > 0) {
+                    var badge = card.querySelector('.card-badge');
+                    if (badge) {
+                        badge.insertAdjacentHTML('afterend', '<span class="card-viewers">' + count + ' watching</span>');
+                    }
+                }
+            }
         }
 
         function selectStream(streamKey) {
@@ -223,18 +249,6 @@
             }
         }
 
-        async function fetchLiveStreams() {
-            var apiUrl = document.getElementById('api-url').value;
-            try {
-                var res = await fetch(apiUrl + '/v1/streams/live');
-                if (!res.ok) return;
-                var json = await res.json();
-                renderLiveStreams(json.data);
-            } catch (e) {
-                // silently ignore refresh errors
-            }
-        }
-
         async function fetchVodStreams() {
             var apiUrl = document.getElementById('api-url').value;
             try {
@@ -261,16 +275,92 @@
             });
         }
 
-        // Initial fetch and auto-refresh every 10 seconds
-        fetchLiveStreams();
-        fetchVodStreams();
-        refreshInterval = setInterval(function() {
-            fetchLiveStreams();
-            fetchVodStreams();
-        }, 10000);
+        // --- WebSocket ---
+        function wsUrl() {
+            var loc = window.location;
+            if (loc.protocol === 'http:' || loc.protocol === 'https:') {
+                var proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+                return proto + '//' + loc.host + '/ws';
+            }
+            return 'ws://localhost:3000/ws';
+        }
 
+        function connectWs() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                return;
+            }
+            ws = new WebSocket(wsUrl());
+            ws.onopen = function() {
+                log('WebSocket connected');
+                // Subscribe to currently watching stream if any
+                if (currentWatchingStreamId) {
+                    ws.send(JSON.stringify({ action: 'subscribe', stream_id: currentWatchingStreamId }));
+                }
+            };
+            ws.onmessage = function(e) {
+                try {
+                    var msg = JSON.parse(e.data);
+                    switch (msg.type) {
+                        case 'live_streams':
+                            renderLiveStreams(msg.data);
+                            break;
+                        case 'viewer_count':
+                            updateViewerCount(msg.stream_id, msg.count);
+                            break;
+                        case 'reconnect':
+                            handleReconnect(msg);
+                            break;
+                    }
+                } catch (err) {
+                    // ignore parse errors
+                }
+            };
+            ws.onclose = function() {
+                log('WebSocket disconnected, reconnecting in 3s...');
+                wsReconnectTimer = setTimeout(connectWs, 3000);
+            };
+            ws.onerror = function() {
+                // onclose will fire after onerror
+            };
+        }
+
+        function handleReconnect(msg) {
+            if (!currentWatchingStreamId) return;
+            if (msg.stream_ids && msg.stream_ids.includes(currentWatchingStreamId)) {
+                log('Received reconnect event for current stream. Reconnecting in 3s...');
+                setTimeout(function() {
+                    var streamKey = document.getElementById('stream-key').value.trim();
+                    if (streamKey) {
+                        watchWHEP();
+                    }
+                }, 3000);
+            }
+        }
+
+        function wsSubscribe(streamId) {
+            currentWatchingStreamId = streamId;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: 'subscribe', stream_id: streamId }));
+            }
+        }
+
+        function wsUnsubscribe(streamId) {
+            if (ws && ws.readyState === WebSocket.OPEN && streamId) {
+                ws.send(JSON.stringify({ action: 'unsubscribe', stream_id: streamId }));
+            }
+            if (currentWatchingStreamId === streamId) {
+                currentWatchingStreamId = null;
+            }
+        }
+
+        // Initial fetch: VOD via REST (not pushed by WS), live streams come from WS
+        fetchVodStreams();
+        // Refresh VOD list periodically (VODs don't change often)
+        setInterval(fetchVodStreams, 30000);
         // Refresh live thumbnails every 30 seconds
         liveThumbnailInterval = setInterval(refreshLiveThumbnails, 30000);
+        // Connect WebSocket (live streams pushed from server)
+        connectWs();
 
         function log(msg) {
             const el = document.getElementById('log');
@@ -280,6 +370,9 @@
         }
 
         function stopWatching() {
+            if (currentWatchingStreamId) {
+                wsUnsubscribe(currentWatchingStreamId);
+            }
             if (pc) { pc.close(); pc = null; }
             if (hls) { hls.destroy(); hls = null; }
             const video = document.getElementById('player');
@@ -295,24 +388,22 @@
             const streamKey = document.getElementById('stream-key').value.trim();
             if (!streamKey) { log('Please enter a stream key.'); return; }
 
-            // Get WHEP URL from API if not already cached
+            // Get WHEP URL from cache
             var whepUrl = currentStreamData && currentStreamData.urls && currentStreamData.urls.whep;
             if (!whepUrl) {
-                // Fetch stream details from API to get the WHEP URL
-                try {
-                    var apiUrl = document.getElementById('api-url').value;
-                    // Find stream by key from live streams list
-                    var found = liveStreamsCache.find(function(s) { return s.stream_key === streamKey; });
-                    if (found && found.urls && found.urls.whep) {
-                        whepUrl = found.urls.whep;
-                    } else {
-                        log('Cannot find WHEP URL for this stream. Make sure the stream is live.');
-                        return;
-                    }
-                } catch (e) {
-                    log('Error resolving WHEP URL: ' + e.message);
+                var found = liveStreamsCache.find(function(s) { return s.stream_key === streamKey; });
+                if (found && found.urls && found.urls.whep) {
+                    whepUrl = found.urls.whep;
+                    currentStreamData = found;
+                } else {
+                    log('Cannot find WHEP URL for this stream. Make sure the stream is live.');
                     return;
                 }
+            }
+
+            // Subscribe to viewer count for this stream
+            if (currentStreamData && currentStreamData.id) {
+                wsSubscribe(currentStreamData.id);
             }
 
             try {
@@ -326,6 +417,16 @@
                 pc.ontrack = (event) => {
                     log('Received track: ' + event.track.kind);
                     document.getElementById('player').srcObject = event.streams[0];
+                };
+
+                pc.onconnectionstatechange = function() {
+                    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                        log('WebRTC disconnected, reconnecting in 3s...');
+                        setTimeout(function() {
+                            var sk = document.getElementById('stream-key').value.trim();
+                            if (sk) watchWHEP();
+                        }, 3000);
+                    }
                 };
 
                 const offer = await pc.createOffer();
@@ -367,17 +468,24 @@
             const streamKey = document.getElementById('stream-key').value.trim();
             if (!streamKey) { log('Please enter a stream key.'); return; }
 
-            // Get HLS URL from API
+            // Get HLS URL from cache
             var hlsUrl = currentStreamData && currentStreamData.urls && currentStreamData.urls.hls;
             if (!hlsUrl) {
                 var found = liveStreamsCache.find(function(s) { return s.stream_key === streamKey; });
                 if (found && found.urls && found.urls.hls) {
                     hlsUrl = found.urls.hls;
+                    currentStreamData = found;
                 } else {
                     log('Cannot find HLS URL for this stream. Make sure the stream is live.');
                     return;
                 }
             }
+
+            // Subscribe to viewer count for this stream
+            if (currentStreamData && currentStreamData.id) {
+                wsSubscribe(currentStreamData.id);
+            }
+
             const video = document.getElementById('player');
 
             if (Hls.isSupported()) {

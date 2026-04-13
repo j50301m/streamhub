@@ -6,6 +6,8 @@ mod initializer;
 mod log_format;
 pub mod middleware;
 mod routes;
+mod tasks;
+pub mod ws;
 
 #[cfg(test)]
 mod tests;

@@ -35,7 +35,7 @@ sea-orm-migration = { version = "2.0.0-rc.38", features = [
 ] }
 
 # Web framework
-axum = { version = "0.8", features = ["json"] }
+axum = { version = "0.8", features = ["json", "ws"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }

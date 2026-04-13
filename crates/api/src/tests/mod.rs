@@ -40,12 +40,17 @@ pub(crate) fn test_config() -> AppConfig {
         otel_endpoint: "http://localhost:4317".to_string(),
         thumbnail_capture_interval_secs: 60,
         redis_url: "redis://localhost:6379".to_string(),
+        viewer_count_interval_secs: 10,
         mediamtx_instances_json: String::new(),
     }
 }
 
 pub(crate) fn test_storage() -> std::sync::Arc<dyn storage::ObjectStorage> {
     std::sync::Arc::new(storage::MockStorage::new())
+}
+
+pub(crate) fn test_pubsub() -> std::sync::Arc<dyn cache::PubSub> {
+    std::sync::Arc::new(cache::InMemoryPubSub::new())
 }
 
 async fn body_to_json(body: Body) -> serde_json::Value {

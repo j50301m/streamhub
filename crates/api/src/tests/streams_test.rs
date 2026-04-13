@@ -79,6 +79,7 @@ async fn create_stream_success() {
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
         cache: std::sync::Arc::new(cache::InMemoryCache::new()),
+        pubsub: super::test_pubsub(),
         live_tasks: Default::default(),
         mtx_instances: vec![],
     };
@@ -114,6 +115,7 @@ async fn create_stream_viewer_forbidden() {
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
         cache: std::sync::Arc::new(cache::InMemoryCache::new()),
+        pubsub: super::test_pubsub(),
         live_tasks: Default::default(),
         mtx_instances: vec![],
     };
