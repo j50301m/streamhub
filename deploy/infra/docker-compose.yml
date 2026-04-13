@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: streamhub-postgres
+    environment:
+      POSTGRES_USER: streamhub
+      POSTGRES_PASSWORD: streamhub
+      POSTGRES_DB: streamhub
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streamhub"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: streamhub-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  fake-gcs:
+    image: fsouza/fake-gcs-server
+    container_name: streamhub-fake-gcs
+    ports:
+      - "4443:4443"
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "fake-gcs:4443", "-external-url", "http://fake-gcs:4443"]
+    volumes:
+      - gcs-data:/storage
+
+  nginx:
+    image: nginx:alpine
+    container_name: streamhub-nginx
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  pgdata:
+  redis-data:
+  gcs-data:
+
+networks:
+  default:
+    name: streamhub
+    external: true

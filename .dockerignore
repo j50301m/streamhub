@@ -9,4 +9,6 @@ docs/
 *~
 .DS_Store
 .env
-deploy/services/ssl/
+deploy/infra/
+deploy/media/
+deploy/observability/

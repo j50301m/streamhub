@@ -1,0 +1,13 @@
+services:
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/web/Dockerfile.web
+    container_name: streamhub-web
+    ports:
+      - "8081:8080"
+
+networks:
+  default:
+    name: streamhub
+    external: true

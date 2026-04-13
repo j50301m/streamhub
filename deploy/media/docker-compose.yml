@@ -1,0 +1,53 @@
+services:
+  mtx-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.mediamtx
+    container_name: streamhub-mtx-1
+    hostname: mtx-1
+    ports:
+      - "8554:8554"       # RTSP
+      - "8888:8888"       # HLS
+      - "8889:8889"       # WebRTC HTTP
+      - "8189:8189/udp"   # WebRTC ICE UDP
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+      - recordings:/recordings
+
+  mtx-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.mediamtx
+    container_name: streamhub-mtx-2
+    hostname: mtx-2
+    ports:
+      - "8564:8554"
+      - "8898:8888"
+      - "8899:8889"
+      - "8199:8189/udp"
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+      - recordings:/recordings
+
+  mtx-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.mediamtx
+    container_name: streamhub-mtx-3
+    hostname: mtx-3
+    ports:
+      - "8574:8554"
+      - "8908:8888"
+      - "8909:8889"
+      - "8209:8189/udp"
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+      - recordings:/recordings
+
+volumes:
+  recordings:
+
+networks:
+  default:
+    name: streamhub
+    external: true

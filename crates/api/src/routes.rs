@@ -14,6 +14,7 @@ pub fn app_router() -> Router<AppState> {
     Router::new()
         // Health & Metrics
         .route("/healthz", get(healthz))
+        .route("/v1/health", get(handlers::health::health_check))
         .route("/metrics", get(handlers::metrics::metrics_handler))
         // Auth
         .route("/v1/auth/register", post(handlers::auth::register))

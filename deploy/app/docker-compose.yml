@@ -1,0 +1,21 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/app/Dockerfile.api
+    container_name: streamhub-api
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - recordings:/recordings
+      - thumbnails:/thumbnails
+
+volumes:
+  recordings:
+  thumbnails:
+
+networks:
+  default:
+    name: streamhub
+    external: true

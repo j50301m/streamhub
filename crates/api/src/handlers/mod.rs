@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod health;
 pub mod mediamtx_auth;
 pub mod metrics;
 pub mod publish;
