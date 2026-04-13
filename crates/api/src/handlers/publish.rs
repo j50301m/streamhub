@@ -193,6 +193,7 @@ async fn spawn_thumbnail_task(
     let thumbnails_path = state.config.thumbnails_path.clone();
     let capture_interval = state.config.thumbnail_capture_interval_secs;
     let stream_key = stream_key.to_string();
+    let state_clone = state.clone();
 
     // Resolve the HLS base URL from the assigned MTX instance
     let hls_base = mtx_name
@@ -202,6 +203,7 @@ async fn spawn_thumbnail_task(
 
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(capture_interval));
+        let mut first_capture_done = false;
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
@@ -231,6 +233,14 @@ async fn spawn_thumbnail_task(
                             };
                             if let Err(e) = uow.stream_repo().update(active).await {
                                 tracing::warn!(error = %e, "Failed to update thumbnail_url in DB");
+                            }
+
+                            // Notify WS clients about thumbnail on first capture
+                            if !first_capture_done {
+                                if let Err(e) = publish_live_streams_event(&state_clone).await {
+                                    tracing::warn!(error = %e, "Failed to publish live streams after thumbnail");
+                                }
+                                first_capture_done = true;
                             }
                         }
                         Err(e) => {
