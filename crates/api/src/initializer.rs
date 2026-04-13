@@ -181,21 +181,16 @@ fn init_redis(redis_url: &str) -> Result<deadpool_redis::Pool> {
     Ok(pool)
 }
 
-async fn init_storage(config: &AppConfig) -> Result<Option<Arc<dyn storage::ObjectStorage>>> {
-    if config.storage_enabled() {
-        let gcs = GcsStorage::new(
-            &config.gcs_bucket,
-            config.gcs_endpoint_opt(),
-            config.gcs_credentials_path_opt(),
-        )
-        .await?;
-        gcs.ensure_bucket().await?;
-        tracing::info!(bucket = %config.gcs_bucket, "GCS storage enabled");
-        Ok(Some(Arc::new(gcs)))
-    } else {
-        tracing::info!("GCS storage disabled, using local file serving");
-        Ok(None)
-    }
+async fn init_storage(config: &AppConfig) -> Result<Arc<dyn storage::ObjectStorage>> {
+    let gcs = GcsStorage::new(
+        &config.gcs_bucket,
+        config.gcs_endpoint_opt(),
+        config.gcs_credentials_path_opt(),
+    )
+    .await?;
+    gcs.ensure_bucket().await?;
+    tracing::info!(bucket = %config.gcs_bucket, "GCS storage initialized");
+    Ok(Arc::new(gcs))
 }
 
 /// Spawn a background task that periodically health-checks all MediaMTX instances.

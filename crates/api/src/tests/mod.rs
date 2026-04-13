@@ -30,7 +30,6 @@ pub(crate) fn test_config() -> AppConfig {
         jwt_secret: JWT_SECRET.to_string(),
         recordings_path: "/tmp/recordings".to_string(),
         thumbnails_path: "/tmp/thumbnails".to_string(),
-        storage_enabled: "false".to_string(),
         gcs_bucket: "test-bucket".to_string(),
         gcs_endpoint: String::new(),
         gcs_credentials_path: String::new(),
@@ -43,6 +42,10 @@ pub(crate) fn test_config() -> AppConfig {
         redis_url: "redis://localhost:6379".to_string(),
         mediamtx_instances_json: String::new(),
     }
+}
+
+pub(crate) fn test_storage() -> std::sync::Arc<dyn storage::ObjectStorage> {
+    std::sync::Arc::new(storage::MockStorage::new())
 }
 
 async fn body_to_json(body: Body) -> serde_json::Value {

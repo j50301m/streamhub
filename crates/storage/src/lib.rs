@@ -52,10 +52,10 @@ impl GcsStorage {
             .to_string();
 
         let public_base_url = if endpoint.is_some() {
-            // Local dev: serve via nginx /gcs/ proxy
-            format!("/gcs/{}", bucket)
+            // Serve via nginx /vod/ proxy (hides GCS bucket name from client)
+            "/vod".to_string()
         } else {
-            // Real GCS: public URL
+            // Real GCS: public URL (CDN will serve)
             format!("https://storage.googleapis.com/{}", bucket)
         };
 
@@ -198,52 +198,58 @@ async fn load_access_token(_credentials_path: Option<&str>) -> Result<String, St
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Mock storage for testing. Available to all crates.
+pub struct MockStorage {
+    pub uploaded: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl Default for MockStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MockStorage {
+    pub fn new() -> Self {
+        Self {
+            uploaded: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl ObjectStorage for MockStorage {
+    async fn upload_file(&self, _local_path: &Path, key: &str) -> Result<String, StorageError> {
+        self.uploaded.lock().unwrap().push(key.to_string());
+        Ok(key.to_string())
+    }
+
+    async fn upload_dir(
+        &self,
+        local_dir: &Path,
+        prefix: &str,
+    ) -> Result<Vec<String>, StorageError> {
+        let mut keys = Vec::new();
+        let mut entries = tokio::fs::read_dir(local_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            if entry.file_type().await?.is_file() {
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                let key = format!("{}/{}", prefix.trim_end_matches('/'), file_name);
+                self.upload_file(&entry.path(), &key).await?;
+                keys.push(key);
+            }
+        }
+        Ok(keys)
+    }
+
+    fn public_url(&self, key: &str) -> String {
+        format!("http://mock-storage/{}", key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
-
-    pub struct MockStorage {
-        pub uploaded: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl MockStorage {
-        pub fn new() -> Self {
-            Self {
-                uploaded: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl ObjectStorage for MockStorage {
-        async fn upload_file(&self, _local_path: &Path, key: &str) -> Result<String, StorageError> {
-            self.uploaded.lock().unwrap().push(key.to_string());
-            Ok(key.to_string())
-        }
-
-        async fn upload_dir(
-            &self,
-            local_dir: &Path,
-            prefix: &str,
-        ) -> Result<Vec<String>, StorageError> {
-            let mut keys = Vec::new();
-            let mut entries = tokio::fs::read_dir(local_dir).await?;
-            while let Some(entry) = entries.next_entry().await? {
-                if entry.file_type().await?.is_file() {
-                    let file_name = entry.file_name().to_string_lossy().to_string();
-                    let key = format!("{}/{}", prefix.trim_end_matches('/'), file_name);
-                    self.upload_file(&entry.path(), &key).await?;
-                    keys.push(key);
-                }
-            }
-            Ok(keys)
-        }
-
-        fn public_url(&self, key: &str) -> String {
-            format!("http://mock-storage/{}", key)
-        }
-    }
 
     #[tokio::test]
     async fn test_mock_upload_file() {

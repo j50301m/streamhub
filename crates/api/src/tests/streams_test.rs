@@ -75,7 +75,7 @@ async fn create_stream_success() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
-        storage: None,
+        storage: super::test_storage(),
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
         cache: std::sync::Arc::new(cache::InMemoryCache::new()),
@@ -110,7 +110,7 @@ async fn create_stream_viewer_forbidden() {
     let state = AppState {
         uow: UnitOfWork::new(db),
         config: test_config(),
-        storage: None,
+        storage: super::test_storage(),
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
         cache: std::sync::Arc::new(cache::InMemoryCache::new()),
