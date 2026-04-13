@@ -95,7 +95,18 @@ async fn poll_viewer_counts(
                     .and_then(|r| {
                         // MediaMTX v3: readers is an array of reader objects
                         if let Some(arr) = r.as_array() {
-                            Some(arr.len() as u64)
+                            // Only count actual viewers, exclude internal muxers
+                            let count = arr
+                                .iter()
+                                .filter(|reader| {
+                                    reader
+                                        .get("type")
+                                        .and_then(|t| t.as_str())
+                                        .map(|t| t != "hlsMuxer" && t != "rtmpConn")
+                                        .unwrap_or(true)
+                                })
+                                .count();
+                            Some(count as u64)
                         } else if let Some(obj) = r.as_object() {
                             // Fallback: {"readers": {"count": N}}
                             obj.get("count").and_then(|c| c.as_u64())
