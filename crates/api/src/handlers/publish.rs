@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use chrono::Utc;
 use common::AppState;
@@ -19,16 +19,24 @@ pub struct PublishHookPayload {
     pub action: String,
 }
 
-/// POST /internal/hooks/publish
+#[derive(Debug, Deserialize)]
+pub struct PublishHookQuery {
+    /// MediaMTX instance name that sent the webhook (e.g. "mtx-1")
+    pub mtx: Option<String>,
+}
+
+/// POST /internal/hooks/publish?mtx={name}
 /// Called by MediaMTX on publish/unpublish events.
 #[tracing::instrument(skip(state, payload), fields(stream_key = %payload.stream_key, action = %payload.action))]
 pub(crate) async fn publish_hook(
     State(state): State<AppState>,
+    Query(query): Query<PublishHookQuery>,
     Json(payload): Json<PublishHookPayload>,
 ) -> Result<StatusCode, StatusCode> {
     tracing::info!(
         stream_key = %payload.stream_key,
         action = %payload.action,
+        mtx = ?query.mtx,
         "Received publish hook"
     );
 
@@ -86,10 +94,33 @@ pub(crate) async fn publish_hook(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    // Redis: record or remove stream→MTX mapping
+    let stream_id_str = stream_id.to_string();
+    match payload.action.as_str() {
+        "publish" => {
+            if let Some(ref mtx_name) = query.mtx {
+                if let Err(e) =
+                    mediamtx::record_stream_mapping(state.cache.as_ref(), &stream_id_str, mtx_name)
+                        .await
+                {
+                    tracing::error!(error = %e, "Failed to record stream→MTX mapping");
+                }
+            }
+        }
+        "unpublish" => {
+            if let Err(e) =
+                mediamtx::remove_stream_mapping(state.cache.as_ref(), &stream_id_str).await
+            {
+                tracing::error!(error = %e, "Failed to remove stream→MTX mapping");
+            }
+        }
+        _ => {}
+    }
+
     // Manage periodic thumbnail capture task
     match payload.action.as_str() {
         "publish" => {
-            spawn_thumbnail_task(&state, stream_id, &stream_key).await;
+            spawn_thumbnail_task(&state, stream_id, &stream_key, query.mtx.as_deref()).await;
         }
         "unpublish" => {
             cancel_thumbnail_task(&state, stream_id).await;
@@ -124,7 +155,12 @@ pub(crate) async fn publish_hook(
 }
 
 /// Spawn a periodic task that captures a thumbnail from the live HLS stream every 60s.
-async fn spawn_thumbnail_task(state: &AppState, stream_id: Uuid, stream_key: &str) {
+async fn spawn_thumbnail_task(
+    state: &AppState,
+    stream_id: Uuid,
+    stream_key: &str,
+    mtx_name: Option<&str>,
+) {
     let token = CancellationToken::new();
     {
         let mut tasks = state.live_tasks.lock().await;
@@ -137,6 +173,12 @@ async fn spawn_thumbnail_task(state: &AppState, stream_id: Uuid, stream_key: &st
     let capture_interval = state.config.thumbnail_capture_interval_secs;
     let stream_key = stream_key.to_string();
 
+    // Resolve the HLS base URL from the assigned MTX instance
+    let hls_base = mtx_name
+        .and_then(|name| mediamtx::find_instance(&state.mtx_instances, name))
+        .map(|inst| inst.internal_api.replace(":9997", ":8888"))
+        .unwrap_or_else(|| "http://mediamtx:8888".to_string());
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(capture_interval));
         loop {
@@ -146,7 +188,7 @@ async fn spawn_thumbnail_task(state: &AppState, stream_id: Uuid, stream_key: &st
                     break;
                 }
                 _ = interval.tick() => {
-                    let hls_url = format!("http://mediamtx:8888/{}/index.m3u8", stream_key);
+                    let hls_url = format!("{}/{}/index.m3u8", hls_base, stream_key);
                     let thumb_dir = PathBuf::from(&thumbnails_path).join(&stream_key);
                     let thumb_path = thumb_dir.join("live-thumb.jpg");
 
@@ -480,9 +522,9 @@ mod tests {
             storage: None,
             metrics: test_metrics(),
             redis_pool: crate::tests::test_redis_pool(),
-            pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
-            cache: std::sync::Arc::new(common::InMemoryCache::new()),
+            cache: std::sync::Arc::new(cache::InMemoryCache::new()),
             live_tasks: Default::default(),
+            mtx_instances: vec![],
         };
 
         let req = Request::builder()
@@ -524,9 +566,9 @@ mod tests {
             storage: None,
             metrics: test_metrics(),
             redis_pool: crate::tests::test_redis_pool(),
-            pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
-            cache: std::sync::Arc::new(common::InMemoryCache::new()),
+            cache: std::sync::Arc::new(cache::InMemoryCache::new()),
             live_tasks: Default::default(),
+            mtx_instances: vec![],
         };
 
         let req = Request::builder()
@@ -558,9 +600,9 @@ mod tests {
             storage: None,
             metrics: test_metrics(),
             redis_pool: crate::tests::test_redis_pool(),
-            pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
-            cache: std::sync::Arc::new(common::InMemoryCache::new()),
+            cache: std::sync::Arc::new(cache::InMemoryCache::new()),
             live_tasks: Default::default(),
+            mtx_instances: vec![],
         };
 
         let req = Request::builder()

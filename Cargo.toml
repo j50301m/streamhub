@@ -3,12 +3,13 @@ resolver = "2"
 members = [
     "crates/api",
     "crates/auth",
+    "crates/cache",
     "crates/common",
     "crates/entity",
+    "crates/mediamtx",
     "crates/migration",
     "crates/repo",
     "crates/storage",
-    "crates/stream",
     "crates/transcoder",
 ]
 
@@ -67,13 +68,15 @@ metrics-exporter-prometheus = "0.18"
 cfgloader_rs = "1.0"
 tokio-util = { version = "0.7", features = ["rt"] }
 deadpool-redis = "0.23"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 
 # Internal crates
 repo = { path = "crates/repo" }
 common = { path = "crates/common" }
+cache = { path = "crates/cache" }
+mediamtx = { path = "crates/mediamtx" }
 entity = { path = "crates/entity" }
 migration = { path = "crates/migration" }
 auth = { path = "crates/auth" }
-stream = { path = "crates/stream" }
 storage = { path = "crates/storage" }
 transcoder = { path = "crates/transcoder" }

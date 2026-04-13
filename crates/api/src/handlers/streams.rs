@@ -49,9 +49,9 @@ pub struct StreamResponse {
 
 #[derive(Debug, Serialize)]
 pub struct StreamUrls {
-    pub whip: String,
-    pub whep: String,
-    pub hls: String,
+    pub whip: Option<String>,
+    pub whep: Option<String>,
+    pub hls: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,8 +87,39 @@ pub struct LiveStreamResponse {
     pub urls: StreamUrls,
 }
 
-fn build_live_stream_response(model: stream::Model, mediamtx_base: &str) -> LiveStreamResponse {
-    let key = &model.stream_key;
+async fn resolve_urls(state: &AppState, model: &stream::Model) -> StreamUrls {
+    if model.status == stream::StreamStatus::Live {
+        // For live streams, resolve URLs from Redis mapping
+        match mediamtx::resolve_stream_urls(
+            state.cache.as_ref(),
+            &state.mtx_instances,
+            &model.id.to_string(),
+            &model.stream_key,
+        )
+        .await
+        {
+            Ok(Some((whep, hls))) => StreamUrls {
+                whip: None,
+                whep: Some(whep),
+                hls: Some(hls),
+            },
+            _ => StreamUrls {
+                whip: None,
+                whep: None,
+                hls: None,
+            },
+        }
+    } else {
+        StreamUrls {
+            whip: None,
+            whep: None,
+            hls: None,
+        }
+    }
+}
+
+async fn build_live_stream_response(state: &AppState, model: stream::Model) -> LiveStreamResponse {
+    let urls = resolve_urls(state, &model).await;
     LiveStreamResponse {
         id: model.id,
         stream_key: model.stream_key.clone(),
@@ -99,16 +130,12 @@ fn build_live_stream_response(model: stream::Model, mediamtx_base: &str) -> Live
         thumbnail_url: model.thumbnail_url,
         started_at: model.started_at,
         ended_at: model.ended_at,
-        urls: StreamUrls {
-            whip: format!("{mediamtx_base}/{key}/whip"),
-            whep: format!("{mediamtx_base}/{key}/whep"),
-            hls: format!("{mediamtx_base}/{key}/index.m3u8"),
-        },
+        urls,
     }
 }
 
-fn build_stream_response(model: stream::Model, mediamtx_base: &str) -> StreamResponse {
-    let key = &model.stream_key;
+async fn build_stream_response(state: &AppState, model: stream::Model) -> StreamResponse {
+    let urls = resolve_urls(state, &model).await;
     StreamResponse {
         id: model.id,
         user_id: model.user_id,
@@ -118,11 +145,7 @@ fn build_stream_response(model: stream::Model, mediamtx_base: &str) -> StreamRes
         vod_status: model.vod_status,
         hls_url: model.hls_url,
         thumbnail_url: model.thumbnail_url,
-        urls: StreamUrls {
-            whip: format!("{mediamtx_base}/{key}/whip"),
-            whep: format!("{mediamtx_base}/{key}/whep"),
-            hls: format!("{mediamtx_base}/{key}/index.m3u8"),
-        },
+        urls,
         started_at: model.started_at,
         ended_at: model.ended_at,
         created_at: model.created_at,
@@ -136,10 +159,10 @@ pub(crate) async fn list_vod_streams(
 ) -> Result<Json<DataResponse<Vec<LiveStreamResponse>>>, AppError> {
     let models = state.uow.stream_repo().list_vod().await?;
 
-    let data: Vec<LiveStreamResponse> = models
-        .into_iter()
-        .map(|m| build_live_stream_response(m, &state.config.mediamtx_url))
-        .collect();
+    let mut data = Vec::with_capacity(models.len());
+    for m in models {
+        data.push(build_live_stream_response(&state, m).await);
+    }
 
     Ok(Json(DataResponse { data }))
 }
@@ -151,10 +174,10 @@ pub(crate) async fn list_live_streams(
 ) -> Result<Json<DataResponse<Vec<LiveStreamResponse>>>, AppError> {
     let models = state.uow.stream_repo().list_live().await?;
 
-    let data: Vec<LiveStreamResponse> = models
-        .into_iter()
-        .map(|m| build_live_stream_response(m, &state.config.mediamtx_url))
-        .collect();
+    let mut data = Vec::with_capacity(models.len());
+    for m in models {
+        data.push(build_live_stream_response(&state, m).await);
+    }
 
     Ok(Json(DataResponse { data }))
 }
@@ -193,7 +216,7 @@ pub(crate) async fn create_stream(
     let model = txn.stream_repo().create(active).await?;
     txn.commit().await?;
 
-    let resp = build_stream_response(model, &state.config.mediamtx_url);
+    let resp = build_stream_response(&state, model).await;
 
     Ok((StatusCode::CREATED, Json(DataResponse { data: resp })))
 }
@@ -228,11 +251,10 @@ pub(crate) async fn list_streams(
 
     let total_pages = result.total.div_ceil(per_page);
 
-    let data: Vec<StreamResponse> = result
-        .items
-        .into_iter()
-        .map(|m| build_stream_response(m, &state.config.mediamtx_url))
-        .collect();
+    let mut data = Vec::with_capacity(result.items.len());
+    for m in result.items {
+        data.push(build_stream_response(&state, m).await);
+    }
 
     Ok(Json(PaginatedResponse {
         data,
@@ -258,7 +280,7 @@ pub(crate) async fn get_stream(
         .await?
         .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
 
-    let resp = build_stream_response(model, &state.config.mediamtx_url);
+    let resp = build_stream_response(&state, model).await;
     Ok(Json(DataResponse { data: resp }))
 }
 
@@ -293,7 +315,7 @@ pub(crate) async fn update_stream(
     let model = txn.stream_repo().update(active).await?;
     txn.commit().await?;
 
-    let resp = build_stream_response(model, &state.config.mediamtx_url);
+    let resp = build_stream_response(&state, model).await;
     Ok(Json(DataResponse { data: resp }))
 }
 
@@ -359,7 +381,7 @@ pub(crate) async fn end_stream(
     let model = txn.stream_repo().update(active).await?;
     txn.commit().await?;
 
-    let resp = build_stream_response(model, &state.config.mediamtx_url);
+    let resp = build_stream_response(&state, model).await;
     Ok(Json(DataResponse { data: resp }))
 }
 
@@ -395,6 +417,24 @@ pub(crate) async fn create_stream_token(
         return Err(AppError::Forbidden("not the stream owner".to_string()));
     }
 
+    // Select a MediaMTX instance for this stream
+    let instance = mediamtx::select_instance(state.cache.as_ref(), &state.mtx_instances)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "No healthy MTX instance available");
+            AppError::Internal("no healthy MediaMTX instance available".to_string())
+        })?;
+
+    // Set the stream→MTX mapping in Redis (no count increment).
+    // The count is incremented later by the publish webhook when the stream actually goes live.
+    let stream_id_str = id.to_string();
+    mediamtx::set_stream_mapping(state.cache.as_ref(), &stream_id_str, &instance.name)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to set stream→MTX mapping");
+            AppError::Internal("failed to record stream routing".to_string())
+        })?;
+
     // Generate raw token and its hash
     let raw_token = auth::token::generate_stream_token();
     let token_hash = auth::token::hash_token(&raw_token);
@@ -412,7 +452,7 @@ pub(crate) async fn create_stream_token(
 
     let whip_url = format!(
         "{}/{}/whip?token={raw_token}",
-        state.config.mediamtx_url, existing.stream_key
+        instance.public_whip, existing.stream_key
     );
 
     Ok((

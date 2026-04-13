@@ -1,6 +1,8 @@
 FROM bluenviron/mediamtx:latest AS mediamtx
 
 FROM alpine:3
-RUN apk add --no-cache curl ca-certificates
+RUN apk add --no-cache curl ca-certificates sed
 COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
-ENTRYPOINT ["/usr/local/bin/mediamtx"]
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

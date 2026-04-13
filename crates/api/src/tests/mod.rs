@@ -27,7 +27,6 @@ pub(crate) fn test_config() -> AppConfig {
         database_url: String::new(),
         host: "127.0.0.1".to_string(),
         port: 0,
-        mediamtx_url: "http://localhost:9997".to_string(),
         jwt_secret: JWT_SECRET.to_string(),
         recordings_path: "/tmp/recordings".to_string(),
         thumbnails_path: "/tmp/thumbnails".to_string(),
@@ -42,6 +41,7 @@ pub(crate) fn test_config() -> AppConfig {
         otel_endpoint: "http://localhost:4317".to_string(),
         thumbnail_capture_interval_secs: 60,
         redis_url: "redis://localhost:6379".to_string(),
+        mediamtx_instances_json: String::new(),
     }
 }
 

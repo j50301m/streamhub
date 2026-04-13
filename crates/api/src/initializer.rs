@@ -1,13 +1,17 @@
 use anyhow::Result;
 use axum::Router;
+use cache::{CacheStore, RedisCacheStore};
 use cfgloader_rs::FromEnv;
-use common::{AppConfig, AppState, InMemoryCache, InMemoryPubSub};
+use common::{AppConfig, AppState};
+use entity::stream;
 use metrics_exporter_prometheus::PrometheusHandle;
 use opentelemetry_otlp::WithExportConfig;
 use repo::UnitOfWork;
+use sea_orm::Set;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use storage::GcsStorage;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
@@ -27,6 +31,8 @@ pub struct App {
     /// Active live thumbnail capture tasks (server-side HLS periodic capture).
     /// Key = stream_id, Value = CancellationToken to cancel on unpublish or shutdown.
     live_tasks: Arc<tokio::sync::Mutex<HashMap<Uuid, CancellationToken>>>,
+    /// Cancellation token for the health check background task.
+    shutdown_token: CancellationToken,
 }
 
 impl App {
@@ -44,6 +50,9 @@ impl App {
         let addr = SocketAddr::new(config.host.parse()?, config.port);
 
         let live_tasks = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        let mtx_instances = mediamtx::parse_mtx_instances(&config.mediamtx_instances_json);
+        tracing::info!(count = mtx_instances.len(), "Loaded MediaMTX instances");
+        let cache: Arc<dyn CacheStore> = Arc::new(RedisCacheStore::new(redis_pool.clone()));
 
         let state = AppState {
             uow: UnitOfWork::new(db),
@@ -51,10 +60,23 @@ impl App {
             storage,
             metrics: prometheus_handle,
             redis_pool,
-            pubsub: Arc::new(InMemoryPubSub::new()),
-            cache: Arc::new(InMemoryCache::new()),
+            cache,
             live_tasks: live_tasks.clone(),
+            mtx_instances,
         };
+
+        let shutdown_token = CancellationToken::new();
+
+        // Spawn health check background task for MediaMTX instances
+        if !state.mtx_instances.is_empty() {
+            spawn_health_check_task(
+                state.cache.clone(),
+                state.mtx_instances.clone(),
+                state.uow.clone(),
+                state.live_tasks.clone(),
+                shutdown_token.clone(),
+            );
+        }
 
         let router = Router::new()
             .merge(routes::app_router())
@@ -72,6 +94,7 @@ impl App {
             router,
             addr,
             live_tasks,
+            shutdown_token,
         })
     }
 
@@ -81,6 +104,9 @@ impl App {
         axum::serve(listener, self.router)
             .with_graceful_shutdown(shutdown_signal())
             .await?;
+
+        // Cancel health check task
+        self.shutdown_token.cancel();
 
         // Cancel all active live thumbnail tasks on shutdown
         let tasks = self.live_tasks.lock().await;
@@ -170,4 +196,98 @@ async fn init_storage(config: &AppConfig) -> Result<Option<Arc<dyn storage::Obje
         tracing::info!("GCS storage disabled, using local file serving");
         Ok(None)
     }
+}
+
+/// Spawn a background task that periodically health-checks all MediaMTX instances.
+/// On 3 consecutive failures, marks all streams on that instance as Error and cleans up Redis.
+fn spawn_health_check_task(
+    cache: Arc<dyn CacheStore>,
+    instances: Vec<mediamtx::MtxInstance>,
+    uow: UnitOfWork,
+    live_tasks: Arc<tokio::sync::Mutex<HashMap<Uuid, CancellationToken>>>,
+    shutdown: CancellationToken,
+) {
+    tokio::spawn(async move {
+        let mut checker = mediamtx::HealthChecker::new(cache.clone(), instances);
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
+
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => {
+                    tracing::info!("Health check task shutting down");
+                    break;
+                }
+                _ = interval.tick() => {
+                    let newly_failed = checker.check_all().await;
+
+                    for failed_inst in newly_failed {
+                        tracing::error!(name = %failed_inst.name, "Handling MTX failure: cleaning up streams");
+
+                        // Scan Redis for streams mapped to this instance
+                        // We need to use SCAN pattern: stream:*:mtx
+                        // Since CacheStore doesn't support SCAN, we'll use the pool directly
+                        if let Err(e) = handle_mtx_failure(
+                            &cache,
+                            &failed_inst.name,
+                            &uow,
+                            &live_tasks,
+                        ).await {
+                            tracing::error!(name = %failed_inst.name, error = %e, "Failed to handle MTX failure");
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    tracing::info!("Spawned MediaMTX health check task (10s interval)");
+}
+
+/// Handle a failed MTX instance: scan for its streams, mark them as Error, cleanup Redis.
+async fn handle_mtx_failure(
+    cache: &Arc<dyn CacheStore>,
+    mtx_name: &str,
+    uow: &UnitOfWork,
+    live_tasks: &Arc<tokio::sync::Mutex<HashMap<Uuid, CancellationToken>>>,
+) -> Result<()> {
+    // Find all live streams and check which ones are on this MTX
+    let live_streams = uow.stream_repo().list_live().await?;
+
+    for s in live_streams {
+        let stream_id_str = s.id.to_string();
+        let mapped_mtx = cache.get(&format!("stream:{stream_id_str}:mtx")).await?;
+
+        if mapped_mtx.as_deref() == Some(mtx_name) {
+            tracing::warn!(stream_id = %s.id, mtx_name, "Marking stream as Error due to MTX failure");
+
+            // Update DB: stream status = Error
+            let active = stream::ActiveModel {
+                id: Set(s.id),
+                status: Set(stream::StreamStatus::Error),
+                ..Default::default()
+            };
+            if let Err(e) = uow.stream_repo().update(active).await {
+                tracing::error!(stream_id = %s.id, error = %e, "Failed to update stream status to Error");
+            }
+
+            // Remove Redis mapping
+            if let Err(e) = mediamtx::remove_stream_mapping(cache.as_ref(), &stream_id_str).await {
+                tracing::error!(stream_id = %s.id, error = %e, "Failed to remove stream mapping");
+            }
+
+            // Cancel thumbnail task
+            let mut tasks = live_tasks.lock().await;
+            if let Some(token) = tasks.remove(&s.id) {
+                token.cancel();
+                tracing::info!(stream_id = %s.id, "Cancelled thumbnail task for failed MTX stream");
+            }
+        }
+    }
+
+    // Reset stream count to 0
+    cache
+        .set(&format!("mtx:{mtx_name}:stream_count"), "0", None)
+        .await?;
+
+    Ok(())
 }

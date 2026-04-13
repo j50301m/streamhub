@@ -78,9 +78,9 @@ async fn create_stream_success() {
         storage: None,
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
-        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
-        cache: std::sync::Arc::new(common::InMemoryCache::new()),
+        cache: std::sync::Arc::new(cache::InMemoryCache::new()),
         live_tasks: Default::default(),
+        mtx_instances: vec![],
     };
 
     let req = Request::builder()
@@ -113,9 +113,9 @@ async fn create_stream_viewer_forbidden() {
         storage: None,
         metrics: super::test_metrics(),
         redis_pool: super::test_redis_pool(),
-        pubsub: std::sync::Arc::new(common::InMemoryPubSub::new()),
-        cache: std::sync::Arc::new(common::InMemoryCache::new()),
+        cache: std::sync::Arc::new(cache::InMemoryCache::new()),
         live_tasks: Default::default(),
+        mtx_instances: vec![],
     };
 
     let req = Request::builder()
