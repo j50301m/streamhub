@@ -1,6 +1,7 @@
 use anyhow::Result;
 use cache::CacheStore;
 use entity::stream;
+use mediamtx::keys;
 use repo::UnitOfWork;
 use sea_orm::Set;
 use std::collections::HashMap;
@@ -29,7 +30,7 @@ pub fn spawn(
                     break;
                 }
                 _ = interval.tick() => {
-                    let acquired = cache.set_nx("health_check_lock", "1", Some(15)).await.unwrap_or(false);
+                    let acquired = cache.set_nx(keys::HEALTH_CHECK_LOCK, "1", Some(15)).await.unwrap_or(false);
                     if !acquired {
                         continue;
                     }
@@ -55,7 +56,8 @@ pub fn spawn(
     tracing::info!("Spawned MediaMTX health check task (10s interval)");
 }
 
-/// Handle a failed MTX instance: scan for its streams, mark them as Error, cleanup Redis.
+/// Handle a failed MTX instance: scan for its streams via session schema, mark
+/// them as Error, clean up session keys, cancel thumbnail tasks, reset count.
 async fn handle_mtx_failure(
     cache: &Arc<dyn CacheStore>,
     mtx_name: &str,
@@ -63,37 +65,43 @@ async fn handle_mtx_failure(
     live_tasks: &Arc<tokio::sync::Mutex<HashMap<Uuid, CancellationToken>>>,
 ) -> Result<()> {
     let live_streams = uow.stream_repo().list_live().await?;
+    let live_ids: Vec<Uuid> = live_streams.iter().map(|s| s.id).collect();
 
-    for s in live_streams {
-        let stream_id_str = s.id.to_string();
-        let mapped_mtx = cache.get(&format!("stream:{stream_id_str}:mtx")).await?;
+    let hits = mediamtx::get_streams_on_mtx(cache.as_ref(), &live_ids, mtx_name).await?;
 
-        if mapped_mtx.as_deref() == Some(mtx_name) {
-            tracing::warn!(stream_id = %s.id, mtx_name, "Marking stream as Error due to MTX failure");
+    for (stream_id, session_id) in hits {
+        tracing::warn!(%stream_id, %session_id, mtx_name, "Marking stream as Error due to MTX failure");
 
-            let active = stream::ActiveModel {
-                id: Set(s.id),
-                status: Set(stream::StreamStatus::Error),
-                ..Default::default()
-            };
-            if let Err(e) = uow.stream_repo().update(active).await {
-                tracing::error!(stream_id = %s.id, error = %e, "Failed to update stream status to Error");
-            }
+        let active = stream::ActiveModel {
+            id: Set(stream_id),
+            status: Set(stream::StreamStatus::Error),
+            ..Default::default()
+        };
+        if let Err(e) = uow.stream_repo().update(active).await {
+            tracing::error!(%stream_id, error = %e, "Failed to update stream status to Error");
+        }
 
-            if let Err(e) = mediamtx::remove_stream_mapping(cache.as_ref(), &stream_id_str).await {
-                tracing::error!(stream_id = %s.id, error = %e, "Failed to remove stream mapping");
-            }
+        // end_session would DECR mtx count, but we reset count to 0 below anyway.
+        // cleanup_stale_session avoids relying on active_session matching.
+        if let Err(e) = mediamtx::cleanup_stale_session(cache.as_ref(), &session_id).await {
+            tracing::error!(%stream_id, error = %e, "Failed to clean up session");
+        }
+        // Also drop active_session pointer if it still points at this dead session.
+        let active_key = keys::stream_active_session(&stream_id);
+        if cache.get(&active_key).await?.as_deref() == Some(&session_id.to_string()) {
+            let _ = cache.del(&active_key).await;
+        }
 
-            let mut tasks = live_tasks.lock().await;
-            if let Some(token) = tasks.remove(&s.id) {
-                token.cancel();
-                tracing::info!(stream_id = %s.id, "Cancelled thumbnail task for failed MTX stream");
-            }
+        let mut tasks = live_tasks.lock().await;
+        if let Some(token) = tasks.remove(&stream_id) {
+            token.cancel();
+            tracing::info!(%stream_id, "Cancelled thumbnail task for failed MTX stream");
         }
     }
 
+    // Final safety net: reset the failed instance's counter.
     cache
-        .set(&format!("mtx:{mtx_name}:stream_count"), "0", None)
+        .set(&keys::mtx_stream_count(mtx_name), "0", None)
         .await?;
 
     Ok(())

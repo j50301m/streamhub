@@ -44,16 +44,18 @@ hlsAllowOrigins: ['*']
 paths:
   # Only accept UUID v4 format stream keys
   "~^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$":
-    # Webhook when stream becomes ready (published)
-    # __MTX_NAME__ is replaced at container startup by the entrypoint script
+    # Webhook when stream becomes ready (published).
+    # __MTX_NAME__ is replaced at container startup by the entrypoint script.
+    # $MTX_QUERY forwards the WHIP URL's query string (contains session={uuid})
+    # so the API can match this event to the session that POST /token created.
     runOnReady: >
-      curl -s -X POST "http://api:8080/internal/hooks/publish?mtx=__MTX_NAME__"
+      curl -s -X POST "http://api:8080/internal/hooks/publish?mtx=__MTX_NAME__&query=$MTX_QUERY"
       -H "Content-Type: application/json"
       -d '{"stream_key":"$MTX_PATH","action":"publish"}'
 
     # Webhook when stream becomes unavailable (unpublished)
     runOnNotReady: >
-      curl -s -X POST "http://api:8080/internal/hooks/publish?mtx=__MTX_NAME__"
+      curl -s -X POST "http://api:8080/internal/hooks/publish?mtx=__MTX_NAME__&query=$MTX_QUERY"
       -H "Content-Type: application/json"
       -d '{"stream_key":"$MTX_PATH","action":"unpublish"}'
 

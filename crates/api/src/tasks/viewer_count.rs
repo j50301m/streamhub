@@ -1,5 +1,6 @@
 use anyhow::Result;
 use cache::{CacheStore, PubSub};
+use mediamtx::keys;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -35,7 +36,7 @@ pub fn spawn(
                     break;
                 }
                 _ = interval.tick() => {
-                    let acquired = cache.set_nx("viewer_count_lock", "1", Some(lock_ttl)).await.unwrap_or(false);
+                    let acquired = cache.set_nx(keys::VIEWER_COUNT_LOCK, "1", Some(lock_ttl)).await.unwrap_or(false);
                     if !acquired {
                         continue;
                     }
@@ -66,7 +67,7 @@ async fn poll_viewer_counts(
 ) -> Result<()> {
     for inst in instances {
         // Skip instances that are not healthy (draining / unhealthy / missing)
-        let status = cache.get(&format!("mtx:{}:status", inst.name)).await?;
+        let status = cache.get(&keys::mtx_status(&inst.name)).await?;
         if status.as_deref() != Some("healthy") {
             continue;
         }
@@ -116,13 +117,8 @@ async fn poll_viewer_counts(
                     })
                     .unwrap_or(0) as u32;
 
-                let stream_id_key = format!("stream_key:{path_name}:id");
-                let stream_id_str = match cache.get(&stream_id_key).await? {
-                    Some(id) => id,
-                    None => continue,
-                };
-
-                let stream_id = match stream_id_str.parse::<Uuid>() {
+                // stream_key == stream_id (UUID v4), so parse directly.
+                let stream_id = match path_name.parse::<Uuid>() {
                     Ok(id) => id,
                     Err(_) => continue,
                 };
