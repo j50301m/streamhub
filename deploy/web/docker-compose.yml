@@ -4,8 +4,10 @@ services:
       context: ../..
       dockerfile: deploy/web/Dockerfile.web
     container_name: streamhub-web
-    ports:
-      - "8081:8080"
+    # No host port mapping — nginx (in infra compose) proxies /broadcaster/
+    # and /viewer/ to web:8080 via the shared docker network.
+    expose:
+      - "8080"
 
 networks:
   default:
