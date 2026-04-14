@@ -26,6 +26,11 @@ pub fn session_started_at(session_id: &Uuid) -> String {
     format!("session:{session_id}:started_at")
 }
 
+/// `stream_token:{token_hash}` — broadcaster WHIP auth token → stream_id.
+pub fn stream_token(token_hash: &str) -> String {
+    format!("stream_token:{token_hash}")
+}
+
 /// `mtx:{name}:stream_count` — per-instance active stream counter.
 pub fn mtx_stream_count(mtx_name: &str) -> String {
     format!("mtx:{mtx_name}:stream_count")

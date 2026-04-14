@@ -1,12 +1,11 @@
 pub mod recording;
 pub mod stream;
-pub mod stream_token;
 pub mod traits;
 pub mod user;
 
 use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
 
-use traits::{RecordingRepoRef, StreamRepoRef, StreamTokenRepoRef, UserRepoRef};
+use traits::{RecordingRepoRef, StreamRepoRef, UserRepoRef};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepoError {
@@ -51,10 +50,6 @@ impl UnitOfWork {
     pub fn recording_repo(&self) -> RecordingRepoRef<'_, DatabaseConnection> {
         RecordingRepoRef(&self.db)
     }
-
-    pub fn stream_token_repo(&self) -> StreamTokenRepoRef<'_, DatabaseConnection> {
-        StreamTokenRepoRef(&self.db)
-    }
 }
 
 /// Transactional database access for write operations.
@@ -89,9 +84,5 @@ impl TransactionContext {
 
     pub fn recording_repo(&self) -> RecordingRepoRef<'_, DatabaseTransaction> {
         RecordingRepoRef(self.txn())
-    }
-
-    pub fn stream_token_repo(&self) -> StreamTokenRepoRef<'_, DatabaseTransaction> {
-        StreamTokenRepoRef(self.txn())
     }
 }

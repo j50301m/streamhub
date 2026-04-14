@@ -4,7 +4,6 @@ use axum::http::StatusCode;
 use chrono::Utc;
 use common::{AppError, AppState};
 use entity::stream;
-use entity::stream_token;
 use entity::user::UserRole;
 use sea_orm::Set;
 use serde::{Deserialize, Serialize};
@@ -392,6 +391,8 @@ pub struct StreamTokenResponse {
     pub whip_url: String,
 }
 
+const STREAM_TOKEN_TTL_SECS: u64 = 3600;
+
 /// POST /v1/streams/:id/token
 #[tracing::instrument(skip(state), fields(stream_id = %id, user_id = %current_user.id))]
 pub(crate) async fn create_stream_token(
@@ -405,11 +406,10 @@ pub(crate) async fn create_stream_token(
         ));
     }
 
-    let txn = state.uow.begin().await?;
-
-    let existing = txn
+    let existing = state
+        .uow
         .stream_repo()
-        .find_by_id_for_update(id)
+        .find_by_id(id)
         .await?
         .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
 
@@ -435,20 +435,23 @@ pub(crate) async fn create_stream_token(
             AppError::Internal("failed to record stream routing".to_string())
         })?;
 
-    // Generate raw token and its hash
+    // Generate raw token, hash it, and store hash → stream_id in Redis with TTL auto-cleanup.
     let raw_token = auth::token::generate_stream_token();
     let token_hash = auth::token::hash_token(&raw_token);
-    let expires_at = Utc::now() + chrono::Duration::hours(1);
+    let expires_at = Utc::now() + chrono::Duration::seconds(STREAM_TOKEN_TTL_SECS as i64);
 
-    let token_active = stream_token::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        stream_id: Set(id),
-        token_hash: Set(token_hash),
-        expires_at: Set(expires_at),
-        created_at: Set(Utc::now()),
-    };
-    txn.stream_token_repo().create(token_active).await?;
-    txn.commit().await?;
+    state
+        .cache
+        .set(
+            &mediamtx::keys::stream_token(&token_hash),
+            &id.to_string(),
+            Some(STREAM_TOKEN_TTL_SECS),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to persist stream token");
+            AppError::Internal("failed to persist stream token".to_string())
+        })?;
 
     let whip_url = format!(
         "{}/{}/whip?token={raw_token}&session={session_id}",

@@ -180,6 +180,11 @@ async fn init_db(config: &AppConfig) -> Result<sea_orm::DatabaseConnection> {
     tracing::info!("Syncing database schema from entities...");
     db.get_schema_registry("entity::*").sync(&db).await?;
 
+    // SPEC-020: stream_tokens moved to Redis; drop the legacy table if present.
+    use sea_orm::ConnectionTrait;
+    db.execute_unprepared("DROP TABLE IF EXISTS stream_tokens")
+        .await?;
+
     Ok(db)
 }
 
