@@ -1,6 +1,10 @@
+pub mod keys;
+
 use cache::CacheStore;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// A single MediaMTX instance with its internal and public URLs.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -27,11 +31,6 @@ pub fn parse_mtx_instances(json: &str) -> Vec<MtxInstance> {
 }
 
 /// Select the healthiest MediaMTX instance with the lowest stream count.
-///
-/// 1. Filter instances where `mtx:{name}:status` == "healthy"
-/// 2. For each healthy instance, read `mtx:{name}:stream_count` (default 0)
-/// 3. Return the instance with the lowest count
-/// 4. If all unhealthy/draining/missing, return an error
 #[tracing::instrument(skip(cache, instances))]
 pub async fn select_instance(
     cache: &dyn CacheStore,
@@ -40,13 +39,13 @@ pub async fn select_instance(
     let mut best: Option<(MtxInstance, i64)> = None;
 
     for inst in instances {
-        let status = cache.get(&format!("mtx:{}:status", inst.name)).await?;
+        let status = cache.get(&keys::mtx_status(&inst.name)).await?;
         if status.as_deref() != Some("healthy") {
             tracing::debug!(name = %inst.name, status = ?status, "Instance not healthy, skipping");
             continue;
         }
 
-        let count_key = format!("mtx:{}:stream_count", inst.name);
+        let count_key = keys::mtx_stream_count(&inst.name);
         let count: i64 = cache
             .get(&count_key)
             .await?
@@ -68,73 +67,101 @@ pub async fn select_instance(
     .ok_or_else(|| anyhow::anyhow!("No healthy MediaMTX instances available"))
 }
 
-/// Set the stream→MTX mapping in Redis without incrementing the stream count.
-/// Used during token creation to reserve the mapping before the stream is actually live.
+/// Create a new session: generate session_id, write session:* keys, and
+/// overwrite stream:{id}:active_session.
+///
+/// Returns the fresh session_id. The previous active session (if any) is NOT
+/// cleaned up here — it will be detected as stale when its webhook arrives.
 #[tracing::instrument(skip(cache))]
-pub async fn set_stream_mapping(
+pub async fn create_session(
     cache: &dyn CacheStore,
-    stream_id: &str,
+    stream_id: &Uuid,
     mtx_name: &str,
-) -> Result<(), anyhow::Error> {
+) -> Result<Uuid, anyhow::Error> {
+    let session_id = Uuid::new_v4();
+    let sid_str = session_id.to_string();
+
     cache
-        .set(&format!("stream:{stream_id}:mtx"), mtx_name, None)
+        .set(&keys::session_mtx(&session_id), mtx_name, None)
+        .await?;
+    cache
+        .set(
+            &keys::session_stream_id(&session_id),
+            &stream_id.to_string(),
+            None,
+        )
+        .await?;
+    cache
+        .set(
+            &keys::session_started_at(&session_id),
+            &Utc::now().to_rfc3339(),
+            None,
+        )
+        .await?;
+    cache
+        .set(&keys::stream_active_session(stream_id), &sid_str, None)
         .await?;
 
     tracing::info!(
-        stream_id,
+        %stream_id,
+        %session_id,
         mtx_name,
-        "Set stream→MTX mapping (no count increment)"
+        "Created stream session"
     );
-    Ok(())
+    Ok(session_id)
 }
 
-/// Record a stream→MTX mapping in Redis and increment the instance's stream count.
-#[tracing::instrument(skip(cache))]
-pub async fn record_stream_mapping(
+/// Read the currently active session for a stream.
+pub async fn get_active_session(
     cache: &dyn CacheStore,
-    stream_id: &str,
-    mtx_name: &str,
-) -> Result<(), anyhow::Error> {
-    // SET stream:{stream_id}:mtx → mtx_name
-    cache
-        .set(&format!("stream:{stream_id}:mtx"), mtx_name, None)
-        .await?;
-
-    // INCR mtx:{name}:stream_count
-    // CacheStore doesn't have INCR, so we read-modify-write.
-    // This is fine since publish hooks are serialized per stream.
-    let count_key = format!("mtx:{mtx_name}:stream_count");
-    let current: i64 = cache
-        .get(&count_key)
-        .await?
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    cache
-        .set(&count_key, &(current + 1).to_string(), None)
-        .await?;
-
-    tracing::info!(
-        stream_id,
-        mtx_name,
-        new_count = current + 1,
-        "Recorded stream→MTX mapping"
-    );
-    Ok(())
+    stream_id: &Uuid,
+) -> Result<Option<Uuid>, anyhow::Error> {
+    let value = cache.get(&keys::stream_active_session(stream_id)).await?;
+    match value {
+        Some(s) => Ok(s.parse().ok()),
+        None => Ok(None),
+    }
 }
 
-/// Remove a stream→MTX mapping from Redis and decrement the instance's stream count.
-#[tracing::instrument(skip(cache))]
-pub async fn remove_stream_mapping(
+/// Read the MTX name associated with a session.
+pub async fn get_session_mtx(
     cache: &dyn CacheStore,
-    stream_id: &str,
+    session_id: &Uuid,
 ) -> Result<Option<String>, anyhow::Error> {
-    let mapping_key = format!("stream:{stream_id}:mtx");
-    let mtx_name = cache.get(&mapping_key).await?;
+    cache.get(&keys::session_mtx(session_id)).await
+}
+
+/// End the currently active session for a stream.
+///
+/// This is called when an active-session unpublish arrives. It deletes all
+/// session:* keys and the stream:{id}:active_session pointer, then returns the
+/// mtx_name so the caller can DECR that instance's count.
+#[tracing::instrument(skip(cache))]
+pub async fn end_session(
+    cache: &dyn CacheStore,
+    session_id: &Uuid,
+) -> Result<Option<String>, anyhow::Error> {
+    let mtx_name = cache.get(&keys::session_mtx(session_id)).await?;
+    let stream_id_str = cache.get(&keys::session_stream_id(session_id)).await?;
+
+    cache.del(&keys::session_mtx(session_id)).await?;
+    cache.del(&keys::session_stream_id(session_id)).await?;
+    cache.del(&keys::session_started_at(session_id)).await?;
+
+    // Only clear active_session if it still points to us (avoid racing with a
+    // newer session that already overwrote it).
+    if let Some(sid_str) = stream_id_str {
+        if let Ok(stream_id) = sid_str.parse::<Uuid>() {
+            let current = cache.get(&keys::stream_active_session(&stream_id)).await?;
+            if current.as_deref() == Some(&session_id.to_string()) {
+                cache.del(&keys::stream_active_session(&stream_id)).await?;
+            }
+        }
+    }
 
     if let Some(ref name) = mtx_name {
-        cache.del(&mapping_key).await?;
-
-        let count_key = format!("mtx:{name}:stream_count");
+        // DECR the mtx stream_count.
+        let count_key = keys::mtx_stream_count(name);
         let current: i64 = cache
             .get(&count_key)
             .await?
@@ -142,19 +169,66 @@ pub async fn remove_stream_mapping(
             .unwrap_or(0);
         let new_count = (current - 1).max(0);
         cache.set(&count_key, &new_count.to_string(), None).await?;
-
-        tracing::info!(stream_id, mtx_name = %name, new_count, "Removed stream→MTX mapping");
+        tracing::info!(%session_id, mtx_name = %name, new_count, "Ended active session");
     }
 
     Ok(mtx_name)
 }
 
-/// Look up which MTX instance a stream is assigned to.
-pub async fn get_stream_mtx(
+/// Clean up a stale session: deletes session:* keys (but not
+/// stream:{id}:active_session, which belongs to a newer session) and DECRs the
+/// session's original MTX count.
+#[tracing::instrument(skip(cache))]
+pub async fn cleanup_stale_session(
     cache: &dyn CacheStore,
-    stream_id: &str,
+    session_id: &Uuid,
 ) -> Result<Option<String>, anyhow::Error> {
-    cache.get(&format!("stream:{stream_id}:mtx")).await
+    let mtx_name = cache.get(&keys::session_mtx(session_id)).await?;
+
+    cache.del(&keys::session_mtx(session_id)).await?;
+    cache.del(&keys::session_stream_id(session_id)).await?;
+    cache.del(&keys::session_started_at(session_id)).await?;
+
+    if let Some(ref name) = mtx_name {
+        let count_key = keys::mtx_stream_count(name);
+        let current: i64 = cache
+            .get(&count_key)
+            .await?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let new_count = (current - 1).max(0);
+        cache.set(&count_key, &new_count.to_string(), None).await?;
+        tracing::info!(%session_id, mtx_name = %name, new_count, "Cleaned up stale session");
+    }
+
+    Ok(mtx_name)
+}
+
+/// Find all streams whose active session currently lives on `mtx_name`.
+///
+/// Iterates over the DB's live streams (bounded, small set) and checks
+/// stream:{id}:active_session → session:{sid}:mtx for each. Returns
+/// `(stream_id, session_id)` pairs for callers that need to clean up or
+/// migrate those streams (drain / health-check failure).
+#[tracing::instrument(skip(cache, live_stream_ids))]
+pub async fn get_streams_on_mtx(
+    cache: &dyn CacheStore,
+    live_stream_ids: &[Uuid],
+    mtx_name: &str,
+) -> Result<Vec<(Uuid, Uuid)>, anyhow::Error> {
+    let mut hits = Vec::new();
+    for stream_id in live_stream_ids {
+        let Some(session_id) = get_active_session(cache, stream_id).await? else {
+            continue;
+        };
+        let Some(session_mtx) = get_session_mtx(cache, &session_id).await? else {
+            continue;
+        };
+        if session_mtx == mtx_name {
+            hits.push((*stream_id, session_id));
+        }
+    }
+    Ok(hits)
 }
 
 /// Find an MtxInstance by name.
@@ -162,15 +236,19 @@ pub fn find_instance<'a>(instances: &'a [MtxInstance], name: &str) -> Option<&'a
     instances.iter().find(|i| i.name == name)
 }
 
-/// Build stream URLs based on the assigned MTX instance.
-/// Returns (whep_url, hls_url) or None if stream is not mapped.
+/// Build stream URLs based on the stream's currently active session.
+/// Returns (whep_url, hls_url) or None if there is no active session.
 pub async fn resolve_stream_urls(
     cache: &dyn CacheStore,
     instances: &[MtxInstance],
-    stream_id: &str,
+    stream_id: &Uuid,
     stream_key: &str,
 ) -> Result<Option<(String, String)>, anyhow::Error> {
-    let mtx_name = match get_stream_mtx(cache, stream_id).await? {
+    let session_id = match get_active_session(cache, stream_id).await? {
+        Some(sid) => sid,
+        None => return Ok(None),
+    };
+    let mtx_name = match get_session_mtx(cache, &session_id).await? {
         Some(name) => name,
         None => return Ok(None),
     };
@@ -178,7 +256,7 @@ pub async fn resolve_stream_urls(
     let instance = match find_instance(instances, &mtx_name) {
         Some(inst) => inst,
         None => {
-            tracing::warn!(stream_id, mtx_name, "Stream mapped to unknown MTX instance");
+            tracing::warn!(%stream_id, mtx_name, "Stream mapped to unknown MTX instance");
             return Ok(None);
         }
     };
@@ -230,11 +308,10 @@ impl HealthChecker {
             };
 
             if healthy {
-                // Reset failure count and mark healthy (with TTL so it auto-expires to missing = unhealthy)
                 self.failure_counts.remove(&inst.name);
                 if let Err(e) = self
                     .cache
-                    .set(&format!("mtx:{}:status", inst.name), "healthy", Some(30))
+                    .set(&keys::mtx_status(&inst.name), "healthy", Some(30))
                     .await
                 {
                     tracing::error!(name = %inst.name, error = %e, "Failed to set health status");
@@ -246,10 +323,9 @@ impl HealthChecker {
 
                 if *count == 3 {
                     tracing::error!(name = %inst.name, "MTX reached failure threshold (3), triggering cleanup");
-                    // Mark as unhealthy explicitly (no TTL)
                     if let Err(e) = self
                         .cache
-                        .set(&format!("mtx:{}:status", inst.name), "unhealthy", None)
+                        .set(&keys::mtx_status(&inst.name), "unhealthy", None)
                         .await
                     {
                         tracing::error!(name = %inst.name, error = %e, "Failed to set unhealthy status");

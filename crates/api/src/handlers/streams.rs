@@ -89,11 +89,11 @@ pub struct LiveStreamResponse {
 
 async fn resolve_urls(state: &AppState, model: &stream::Model) -> StreamUrls {
     if model.status == stream::StreamStatus::Live {
-        // For live streams, resolve URLs from Redis mapping
+        // For live streams, resolve URLs from the stream's active session.
         match mediamtx::resolve_stream_urls(
             state.cache.as_ref(),
             &state.mtx_instances,
-            &model.id.to_string(),
+            &model.id,
             &model.stream_key,
         )
         .await
@@ -425,13 +425,13 @@ pub(crate) async fn create_stream_token(
             AppError::Internal("no healthy MediaMTX instance available".to_string())
         })?;
 
-    // Set the stream→MTX mapping in Redis (no count increment).
-    // The count is incremented later by the publish webhook when the stream actually goes live.
-    let stream_id_str = id.to_string();
-    mediamtx::set_stream_mapping(state.cache.as_ref(), &stream_id_str, &instance.name)
+    // Create a session for this publish attempt. The publish webhook will verify
+    // the session_id it receives matches stream:{id}:active_session before
+    // incrementing the MTX count and flipping status to Live.
+    let session_id = mediamtx::create_session(state.cache.as_ref(), &id, &instance.name)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, "Failed to set stream→MTX mapping");
+            tracing::error!(error = %e, "Failed to create stream session");
             AppError::Internal("failed to record stream routing".to_string())
         })?;
 
@@ -451,7 +451,7 @@ pub(crate) async fn create_stream_token(
     txn.commit().await?;
 
     let whip_url = format!(
-        "{}/{}/whip?token={raw_token}",
+        "{}/{}/whip?token={raw_token}&session={session_id}",
         instance.public_whip, existing.stream_key
     );
 

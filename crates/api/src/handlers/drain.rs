@@ -1,6 +1,7 @@
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use common::AppState;
+use mediamtx::keys;
 use serde::Deserialize;
 
 use crate::ws::types::RedisEvent;
@@ -20,10 +21,9 @@ pub(crate) async fn drain_handler(
 ) -> Result<StatusCode, StatusCode> {
     let mtx_name = &query.mtx;
 
-    // Mark as draining in Redis (unified status key, no TTL)
     state
         .cache
-        .set(&format!("mtx:{mtx_name}:status"), "draining", None)
+        .set(&keys::mtx_status(mtx_name), "draining", None)
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to set draining status");
@@ -32,28 +32,21 @@ pub(crate) async fn drain_handler(
 
     tracing::info!(mtx = %mtx_name, "Marked MTX instance as draining");
 
-    // Find all live streams on this MTX instance
     let live_streams = state.uow.stream_repo().list_live().await.map_err(|e| {
         tracing::error!(error = %e, "Failed to list live streams");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+    let live_ids: Vec<uuid::Uuid> = live_streams.iter().map(|s| s.id).collect();
 
-    let mut affected_stream_ids = Vec::new();
-    for s in &live_streams {
-        let stream_id_str = s.id.to_string();
-        let mapped_mtx = state
-            .cache
-            .get(&format!("stream:{stream_id_str}:mtx"))
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "Failed to get stream MTX mapping");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+    let hits = mediamtx::get_streams_on_mtx(state.cache.as_ref(), &live_ids, mtx_name)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to find streams on MTX");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
-        if mapped_mtx.as_deref() == Some(mtx_name) {
-            affected_stream_ids.push(s.id);
-        }
-    }
+    let affected_stream_ids: Vec<uuid::Uuid> =
+        hits.into_iter().map(|(stream_id, _)| stream_id).collect();
 
     if affected_stream_ids.is_empty() {
         tracing::info!(mtx = %mtx_name, "No active streams on this instance");
@@ -66,7 +59,6 @@ pub(crate) async fn drain_handler(
         "Publishing reconnect event for affected streams"
     );
 
-    // Publish reconnect event via Redis PubSub
     let event = RedisEvent::Reconnect {
         reason: "server_maintenance".to_string(),
         stream_ids: affected_stream_ids,
