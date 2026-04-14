@@ -63,29 +63,24 @@ async fn handle_publish_auth(state: &AppState, payload: &MediaMtxAuthRequest) ->
         }
     };
 
-    // Hash the provided token and look it up
+    // Hash the provided token and look it up in Redis.
     let token_hash = auth::token::hash_token(&raw_token);
+    let key = mediamtx::keys::stream_token(&token_hash);
 
-    let token_record = match state
-        .uow
-        .stream_token_repo()
-        .find_by_stream_and_hash(stream_model.id, &token_hash)
-        .await
-    {
-        Ok(Some(t)) => t,
+    let cached_stream_id = match state.cache.get(&key).await {
+        Ok(Some(v)) => v,
         Ok(None) => {
-            tracing::warn!("publish auth: token not found");
+            tracing::warn!("publish auth: token not found or expired");
             return StatusCode::UNAUTHORIZED;
         }
         Err(e) => {
-            tracing::error!("publish auth db error: {e}");
+            tracing::error!("publish auth cache error: {e}");
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
     };
 
-    // Check expiration
-    if token_record.expires_at < chrono::Utc::now() {
-        tracing::warn!("publish auth: token expired");
+    if cached_stream_id != stream_model.id.to_string() {
+        tracing::warn!("publish auth: token does not match stream");
         return StatusCode::UNAUTHORIZED;
     }
 

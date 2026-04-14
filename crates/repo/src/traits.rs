@@ -1,4 +1,4 @@
-use entity::{recording, stream, stream_token, user};
+use entity::{recording, stream, user};
 use sea_orm::ConnectionTrait;
 use uuid::Uuid;
 
@@ -9,7 +9,6 @@ use crate::RepoError;
 pub struct StreamRepoRef<'a, C: ConnectionTrait>(pub(crate) &'a C);
 pub struct UserRepoRef<'a, C: ConnectionTrait>(pub(crate) &'a C);
 pub struct RecordingRepoRef<'a, C: ConnectionTrait>(pub(crate) &'a C);
-pub struct StreamTokenRepoRef<'a, C: ConnectionTrait>(pub(crate) &'a C);
 
 // ── StreamRepo ──
 
@@ -114,24 +113,5 @@ impl<C: ConnectionTrait> RecordingRepoRef<'_, C> {
         stream_id: Uuid,
     ) -> Result<Option<recording::Model>, RepoError> {
         crate::recording::find_latest_by_stream(self.0, stream_id).await
-    }
-}
-
-// ── StreamTokenRepo ──
-
-impl<C: ConnectionTrait> StreamTokenRepoRef<'_, C> {
-    pub async fn create(
-        &self,
-        model: stream_token::ActiveModel,
-    ) -> Result<stream_token::Model, RepoError> {
-        crate::stream_token::create(self.0, model).await
-    }
-
-    pub async fn find_by_stream_and_hash(
-        &self,
-        stream_id: Uuid,
-        token_hash: &str,
-    ) -> Result<Option<stream_token::Model>, RepoError> {
-        crate::stream_token::find_by_stream_and_hash(self.0, stream_id, token_hash).await
     }
 }
