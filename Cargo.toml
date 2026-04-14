@@ -68,7 +68,7 @@ metrics-exporter-prometheus = "0.18"
 cfgloader_rs = "1.0"
 tokio-util = { version = "0.7", features = ["rt"] }
 deadpool-redis = "0.23"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "hickory-dns"] }
 
 # Internal crates
 repo = { path = "crates/repo" }
