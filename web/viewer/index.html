@@ -388,18 +388,16 @@
             const streamKey = document.getElementById('stream-key').value.trim();
             if (!streamKey) { log('Please enter a stream key.'); return; }
 
-            // Get WHEP URL from cache
-            var whepUrl = currentStreamData && currentStreamData.urls && currentStreamData.urls.whep;
-            if (!whepUrl) {
-                var found = liveStreamsCache.find(function(s) { return s.stream_key === streamKey; });
-                if (found && found.urls && found.urls.whep) {
-                    whepUrl = found.urls.whep;
-                    currentStreamData = found;
-                } else {
-                    log('Cannot find WHEP URL for this stream. Make sure the stream is live.');
-                    return;
-                }
+            // Always prefer liveStreamsCache (WS-updated) over stale currentStreamData.
+            // After MTX migration, WS pushes new live_streams with new URLs — cache is fresh,
+            // but currentStreamData still holds old snapshot pointing to the dead MTX.
+            var found = liveStreamsCache.find(function(s) { return s.stream_key === streamKey; });
+            if (!found || !found.urls || !found.urls.whep) {
+                log('Cannot find WHEP URL for this stream. Make sure the stream is live.');
+                return;
             }
+            currentStreamData = found;
+            var whepUrl = found.urls.whep;
 
             // Subscribe to viewer count for this stream
             if (currentStreamData && currentStreamData.id) {
@@ -468,18 +466,14 @@
             const streamKey = document.getElementById('stream-key').value.trim();
             if (!streamKey) { log('Please enter a stream key.'); return; }
 
-            // Get HLS URL from cache
-            var hlsUrl = currentStreamData && currentStreamData.urls && currentStreamData.urls.hls;
-            if (!hlsUrl) {
-                var found = liveStreamsCache.find(function(s) { return s.stream_key === streamKey; });
-                if (found && found.urls && found.urls.hls) {
-                    hlsUrl = found.urls.hls;
-                    currentStreamData = found;
-                } else {
-                    log('Cannot find HLS URL for this stream. Make sure the stream is live.');
-                    return;
-                }
+            // Always prefer liveStreamsCache (WS-updated) to avoid stale URLs after MTX migration.
+            var found = liveStreamsCache.find(function(s) { return s.stream_key === streamKey; });
+            if (!found || !found.urls || !found.urls.hls) {
+                log('Cannot find HLS URL for this stream. Make sure the stream is live.');
+                return;
             }
+            currentStreamData = found;
+            var hlsUrl = found.urls.hls;
 
             // Subscribe to viewer count for this stream
             if (currentStreamData && currentStreamData.id) {
