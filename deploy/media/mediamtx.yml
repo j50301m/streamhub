@@ -24,8 +24,8 @@ authHTTPAddress: http://api:8080/internal/auth
 
 webrtc: yes
 webrtcAddress: :8889
-webrtcLocalUDPAddress: :8189
-webrtcLocalTCPAddress: :8189
+webrtcLocalUDPAddress: :__WEBRTC_UDP_PORT__
+webrtcLocalTCPAddress: :__WEBRTC_UDP_PORT__
 webrtcAllowOrigins: ['*']
 webrtcICEServers2:
   - url: stun:stun.l.google.com:19302

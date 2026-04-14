@@ -1,7 +1,13 @@
 #!/bin/sh
-# Replace __MTX_NAME__ placeholder with the actual instance name
-if [ -n "$MTX_NAME" ] && [ -f /mediamtx.yml ]; then
-    sed "s/__MTX_NAME__/${MTX_NAME}/g" /mediamtx.yml > /tmp/mediamtx.yml
+# Replace placeholders in mediamtx.yml:
+# - __MTX_NAME__ = instance name (for webhooks)
+# - __WEBRTC_UDP_PORT__ = WebRTC UDP port (must match host port for ICE to work
+#   across docker port mapping; each instance has a unique port)
+WEBRTC_PORT="${WEBRTC_UDP_PORT:-8189}"
+if [ -f /mediamtx.yml ]; then
+    sed -e "s/__MTX_NAME__/${MTX_NAME:-mtx-unknown}/g" \
+        -e "s/__WEBRTC_UDP_PORT__/${WEBRTC_PORT}/g" \
+        /mediamtx.yml > /tmp/mediamtx.yml
     CONFIG="/tmp/mediamtx.yml"
 else
     CONFIG="/mediamtx.yml"

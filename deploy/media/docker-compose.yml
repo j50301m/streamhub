@@ -7,11 +7,12 @@ services:
     hostname: mtx-1
     environment:
       MTX_NAME: mtx-1
+      WEBRTC_UDP_PORT: "8189"
     ports:
       - "8554:8554"       # RTSP
       - "8888:8888"       # HLS
       - "8889:8889"       # WebRTC HTTP
-      - "8189:8189/udp"   # WebRTC ICE UDP
+      - "8189:8189/udp"   # WebRTC ICE UDP (must match WEBRTC_UDP_PORT)
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
       - recordings:/recordings
@@ -24,11 +25,12 @@ services:
     hostname: mtx-2
     environment:
       MTX_NAME: mtx-2
+      WEBRTC_UDP_PORT: "8199"
     ports:
       - "8564:8554"
       - "8898:8888"
       - "8899:8889"
-      - "8199:8189/udp"
+      - "8199:8199/udp"   # internal == host so ICE candidates work
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
       - recordings:/recordings
@@ -41,11 +43,12 @@ services:
     hostname: mtx-3
     environment:
       MTX_NAME: mtx-3
+      WEBRTC_UDP_PORT: "8209"
     ports:
       - "8574:8554"
       - "8908:8888"
       - "8909:8889"
-      - "8209:8189/udp"
+      - "8209:8209/udp"
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
       - recordings:/recordings
