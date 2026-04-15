@@ -24,13 +24,13 @@ receivers:
         parse_mode: HTML
         send_resolved: true
         message: |
-          🚨 <b>[CRITICAL] {{ .CommonLabels.alertname }}</b>
+          {{ if eq .Status "firing" }}🚨 <b>[CRITICAL] {{ .CommonLabels.alertname }}</b>{{ else }}✅ <b>[RESOLVED] {{ .CommonLabels.alertname }}</b>{{ end }}
 
           <b>Summary:</b> {{ .CommonAnnotations.summary }}
           <b>Description:</b> {{ .CommonAnnotations.description }}
 
           <b>Started:</b> {{ (index .Alerts 0).StartsAt }}
-          <b>Firing:</b> {{ .Alerts.Firing | len }}
+          {{ if eq .Status "firing" }}<b>Firing:</b> {{ .Alerts.Firing | len }}{{ else }}<b>Resolved:</b> {{ .Alerts.Resolved | len }}{{ end }}
 
   - name: telegram-warning
     telegram_configs:
@@ -40,13 +40,13 @@ receivers:
         parse_mode: HTML
         send_resolved: true
         message: |
-          ⚠️ <b>[WARNING] {{ .CommonLabels.alertname }}</b>
+          {{ if eq .Status "firing" }}⚠️ <b>[WARNING] {{ .CommonLabels.alertname }}</b>{{ else }}✅ <b>[RESOLVED] {{ .CommonLabels.alertname }}</b>{{ end }}
 
           <b>Summary:</b> {{ .CommonAnnotations.summary }}
           <b>Description:</b> {{ .CommonAnnotations.description }}
 
           <b>Started:</b> {{ (index .Alerts 0).StartsAt }}
-          <b>Firing:</b> {{ .Alerts.Firing | len }}
+          {{ if eq .Status "firing" }}<b>Firing:</b> {{ .Alerts.Firing | len }}{{ else }}<b>Resolved:</b> {{ .Alerts.Resolved | len }}{{ end }}
 
 inhibit_rules:
   - source_matchers:
