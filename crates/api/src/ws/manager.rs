@@ -20,6 +20,14 @@ pub struct WsManager {
     connections: RwLock<HashMap<Uuid, WsConnection>>,
     /// Per-stream subscribers: stream_id → set of conn_ids
     stream_subscribers: RwLock<HashMap<Uuid, HashSet<Uuid>>>,
+    /// Per-channel chat subscribers: stream_id → set of conn_ids. Fed from
+    /// the Redis `streamhub:chat:{stream_id}` pub/sub channel.
+    chat_subscribers: RwLock<HashMap<Uuid, HashSet<Uuid>>>,
+    /// Stream IDs whose chat pub/sub forwarder task is already running on this
+    /// instance. Used by `ensure_chat_pubsub_task` for idempotency — without
+    /// this guard, every WS that subscribes would spawn its own forwarder and
+    /// each chat message would be fanned out N times.
+    chat_pubsub_active: RwLock<HashSet<Uuid>>,
     /// Cached live streams list (pushed to new connections immediately)
     cached_live_streams: RwLock<Vec<LiveStreamData>>,
     /// Cached viewer counts per stream
@@ -32,6 +40,8 @@ impl WsManager {
         Arc::new(Self {
             connections: RwLock::new(HashMap::new()),
             stream_subscribers: RwLock::new(HashMap::new()),
+            chat_subscribers: RwLock::new(HashMap::new()),
+            chat_pubsub_active: RwLock::new(HashSet::new()),
             cached_live_streams: RwLock::new(Vec::new()),
             cached_viewer_counts: RwLock::new(HashMap::new()),
         })
@@ -52,6 +62,67 @@ impl WsManager {
         }
         // Remove empty sets
         subs.retain(|_, v| !v.is_empty());
+        drop(subs);
+
+        let mut chat = self.chat_subscribers.write().await;
+        for subscribers in chat.values_mut() {
+            subscribers.remove(conn_id);
+        }
+        chat.retain(|_, v| !v.is_empty());
+    }
+
+    /// Subscribe a connection to a chat room.
+    pub async fn subscribe_chat(&self, conn_id: Uuid, stream_id: Uuid) {
+        self.chat_subscribers
+            .write()
+            .await
+            .entry(stream_id)
+            .or_default()
+            .insert(conn_id);
+    }
+
+    /// Unsubscribe a connection from a chat room.
+    pub async fn unsubscribe_chat(&self, conn_id: &Uuid, stream_id: &Uuid) {
+        let mut chat = self.chat_subscribers.write().await;
+        if let Some(subscribers) = chat.get_mut(stream_id) {
+            subscribers.remove(conn_id);
+            if subscribers.is_empty() {
+                chat.remove(stream_id);
+            }
+        }
+    }
+
+    /// Atomically claim the chat pub/sub forwarder slot for a stream.
+    /// Returns `true` if this caller is the first — meaning it should spawn
+    /// the forwarder task. Subsequent callers get `false` and must skip.
+    pub async fn try_claim_chat_pubsub(&self, stream_id: Uuid) -> bool {
+        self.chat_pubsub_active.write().await.insert(stream_id)
+    }
+
+    /// Release the chat pub/sub forwarder slot. Called when the forwarder task
+    /// exits (e.g. after `pubsub.unsubscribe` causes its receiver to close),
+    /// so a future stream session can spawn a fresh one.
+    pub async fn release_chat_pubsub(&self, stream_id: &Uuid) {
+        self.chat_pubsub_active.write().await.remove(stream_id);
+    }
+
+    /// Broadcast a serialized JSON payload to all chat subscribers of a room.
+    pub async fn broadcast_chat_to_room(&self, stream_id: &Uuid, payload: &str) {
+        let chat = self.chat_subscribers.read().await;
+        let Some(subscriber_ids) = chat.get(stream_id) else {
+            return;
+        };
+        let conns = self.connections.read().await;
+        for conn_id in subscriber_ids {
+            if let Some(conn) = conns.get(conn_id) {
+                let _ = conn.tx.send(Message::Text(payload.to_string().into()));
+            }
+        }
+    }
+
+    /// Send a `ServerMessage` to a single connection by id.
+    pub async fn send_to(&self, conn_id: &Uuid, msg: &ServerMessage) {
+        self.send_to_connection(conn_id, msg).await;
     }
 
     /// Subscribe a connection to a specific stream's events.
@@ -140,7 +211,7 @@ impl WsManager {
     }
 
     /// Send a message to a single connection.
-    async fn send_to_connection(&self, conn_id: &Uuid, msg: &ServerMessage) {
+    pub async fn send_to_connection(&self, conn_id: &Uuid, msg: &ServerMessage) {
         let text = match serde_json::to_string(msg) {
             Ok(t) => t,
             Err(e) => {

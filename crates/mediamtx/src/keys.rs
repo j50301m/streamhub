@@ -44,6 +44,21 @@ pub fn mtx_status(mtx_name: &str) -> String {
     format!("mtx:{mtx_name}:status")
 }
 
+/// Key `chat:{stream_id}:stream` — Redis Stream holding chat messages for a stream.
+pub fn chat_stream(stream_id: &Uuid) -> String {
+    format!("chat:{stream_id}:stream")
+}
+
+/// Key `chat:ratelimit:{user_id}` — per-user chat rate-limit lock (EX 1).
+pub fn chat_ratelimit(user_id: &Uuid) -> String {
+    format!("chat:ratelimit:{user_id}")
+}
+
+/// Pub/sub channel `streamhub:chat:{stream_id}` for cross-instance chat fan-out.
+pub fn chat_pubsub_channel(stream_id: &Uuid) -> String {
+    format!("streamhub:chat:{stream_id}")
+}
+
 /// Cluster-wide lock key for the viewer-count refresh task.
 pub const VIEWER_COUNT_LOCK: &str = "viewer_count_lock";
 

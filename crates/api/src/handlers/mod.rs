@@ -5,6 +5,8 @@
 
 /// User auth: register / login / refresh / logout / `/v1/me`.
 pub mod auth;
+/// Live chat: subscribe/send/history via WebSocket + Redis Streams.
+pub mod chat;
 /// MTX drain: mark a MediaMTX instance as draining and evict clients.
 pub mod drain;
 /// Health probes for DB and Redis.

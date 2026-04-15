@@ -274,6 +274,17 @@ async fn handle_unpublish(
         tracing::error!(error = %e, "Failed to end session");
     }
 
+    // SPEC-026: stop the chat pub/sub forwarder for this stream. Dropping the
+    // forwarder closes all local chat subscriber tasks that were spawned by
+    // ensure_chat_pubsub_task, so they don't linger as live instances grow.
+    if let Err(e) = state
+        .pubsub
+        .unsubscribe(&mediamtx::keys::chat_pubsub_channel(&stream_id))
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to unsubscribe chat pubsub");
+    }
+
     if let Err(e) = publish_live_streams_event(state).await {
         tracing::error!(error = %e, "Failed to publish live_streams event");
     }
