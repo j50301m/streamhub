@@ -13,50 +13,77 @@ use crate::middleware::CurrentUser;
 
 // ── Request / Response types ───────────────────────────────────────
 
+/// Request body for `POST /v1/auth/register`.
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
+    /// Email address (normalized to lowercase server-side).
     pub email: String,
+    /// Plaintext password; minimum 8 characters.
     pub password: String,
+    /// Desired role. `admin` is rejected to prevent self-elevation.
     pub role: user::UserRole,
 }
 
+/// Request body for `POST /v1/auth/login`.
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
+    /// Email address.
     pub email: String,
+    /// Plaintext password.
     pub password: String,
 }
 
+/// Public user representation returned by auth endpoints and `/v1/me`.
 #[derive(Debug, Serialize)]
 pub struct UserResponse {
+    /// User UUID.
     pub id: Uuid,
+    /// Email (lowercase).
     pub email: String,
+    /// User role.
     pub role: user::UserRole,
+    /// Account creation timestamp.
     pub created_at: chrono::DateTime<Utc>,
 }
 
+/// Request body for `POST /v1/auth/refresh`.
 #[derive(Debug, Deserialize)]
 pub struct RefreshRequest {
+    /// Previously issued refresh token.
     pub refresh_token: String,
 }
 
+/// Request body for `POST /v1/auth/logout`.
+///
+/// Accepted for future token-revocation support; currently no-op.
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct LogoutRequest {
+    /// Refresh token to invalidate (reserved).
     pub refresh_token: String,
 }
 
+/// Response for successful register / login — user profile plus both JWTs.
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
+    /// Authenticated user profile.
     pub user: UserResponse,
+    /// Short-lived JWT used as `Authorization: Bearer`.
     pub access_token: String,
+    /// Long-lived JWT used only against `/v1/auth/refresh`.
     pub refresh_token: String,
+    /// Access-token lifetime in seconds.
     pub expires_in: i64,
 }
 
+/// Response for `POST /v1/auth/refresh` — rotated tokens without user data.
 #[derive(Debug, Serialize)]
 pub struct TokenResponse {
+    /// New short-lived access token.
     pub access_token: String,
+    /// New long-lived refresh token (rotated on every refresh).
     pub refresh_token: String,
+    /// Access-token lifetime in seconds.
     pub expires_in: i64,
 }
 
@@ -76,7 +103,14 @@ fn user_to_response(model: &user::Model) -> UserResponse {
 
 // ── Handlers ───────────────────────────────────────────────────────
 
-/// POST /v1/auth/register
+/// `POST /v1/auth/register` — create a new user and issue initial tokens.
+///
+/// Returns 201 with `AuthResponse`.
+///
+/// # Errors
+/// - 400 `Validation` for invalid email / short password / invalid role
+/// - 409 `USER_ALREADY_EXISTS`
+/// - 500 on password hashing / JWT signing / DB failure
 #[tracing::instrument(skip(state, payload), fields(email = %payload.email))]
 pub(crate) async fn register(
     State(state): State<AppState>,
@@ -142,7 +176,11 @@ pub(crate) async fn register(
     Ok((StatusCode::CREATED, Json(DataResponse { data: resp })))
 }
 
-/// POST /v1/auth/login
+/// `POST /v1/auth/login` — verify credentials and issue access + refresh tokens.
+///
+/// # Errors
+/// - 401 `INVALID_CREDENTIALS` on unknown email or wrong password
+/// - 500 on JWT signing / DB failure
 #[tracing::instrument(skip(state, payload), fields(email = %payload.email))]
 pub(crate) async fn login(
     State(state): State<AppState>,
@@ -175,7 +213,12 @@ pub(crate) async fn login(
     Ok(Json(DataResponse { data: resp }))
 }
 
-/// POST /v1/auth/refresh
+/// `POST /v1/auth/refresh` — exchange a valid refresh token for a new pair.
+///
+/// # Errors
+/// - 401 `REFRESH_TOKEN_INVALID` for expired / malformed / wrong-type token
+///   or a user that no longer exists
+/// - 500 on JWT signing / DB failure
 #[tracing::instrument(skip(state, payload))]
 pub(crate) async fn refresh(
     State(state): State<AppState>,
@@ -217,7 +260,13 @@ pub(crate) async fn refresh(
     }))
 }
 
-/// POST /v1/auth/logout
+/// `POST /v1/auth/logout` — auth-gated no-op returning 204.
+///
+/// Present so clients can drop local state with a single call; refresh-token
+/// revocation is tracked in the backlog.
+///
+/// # Errors
+/// - 401 if the access token is missing / invalid
 #[tracing::instrument(skip(_current_user, _payload))]
 pub(crate) async fn logout(
     _current_user: CurrentUser,
@@ -226,7 +275,11 @@ pub(crate) async fn logout(
     StatusCode::NO_CONTENT
 }
 
-/// GET /v1/me
+/// `GET /v1/me` — return the authenticated user's profile.
+///
+/// # Errors
+/// - 401 if the access token is missing / invalid
+/// - 404 `USER_NOT_FOUND` if the user was deleted between requests
 #[tracing::instrument(skip(state), fields(user_id = %current_user.id))]
 pub(crate) async fn me(
     current_user: CurrentUser,

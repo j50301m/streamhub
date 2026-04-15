@@ -4,8 +4,13 @@ use axum::response::{IntoResponse, Response};
 use common::AppError;
 use serde::de::DeserializeOwned;
 
-/// Custom JSON extractor that converts rejection errors into our unified error format.
-pub struct AppJson<T>(pub T);
+/// JSON extractor that maps deserialization failures to `AppError::Validation`
+/// so clients receive the project's unified error envelope instead of Axum's
+/// default plain-text response.
+pub struct AppJson<T>(
+    /// Decoded request body.
+    pub T,
+);
 
 impl<S, T> FromRequest<S> for AppJson<T>
 where

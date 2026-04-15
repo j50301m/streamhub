@@ -13,43 +13,71 @@ use crate::extractors::AppJson;
 
 use crate::middleware::CurrentUser;
 
+/// Request body for `POST /v1/streams`.
 #[derive(Debug, Deserialize)]
 pub struct CreateStreamRequest {
+    /// Optional display title for the stream.
     pub title: Option<String>,
 }
 
+/// Request body for `PATCH /v1/streams/:id`.
 #[derive(Debug, Deserialize)]
 pub struct UpdateStreamRequest {
+    /// New display title. Omit to leave unchanged.
     pub title: Option<String>,
 }
 
+/// Query string for `GET /v1/streams`.
 #[derive(Debug, Deserialize)]
 pub struct ListStreamsQuery {
+    /// Filter by status (`Pending` / `Live` / `Ended` / `Error`).
     pub status: Option<String>,
+    /// 1-indexed page number. Defaults to 1.
     pub page: Option<u64>,
+    /// Page size, capped at 100. Defaults to 20.
     pub per_page: Option<u64>,
 }
 
+/// Full stream representation returned by the `/v1/streams/*` endpoints.
 #[derive(Debug, Serialize)]
 pub struct StreamResponse {
+    /// Stream UUID.
     pub id: Uuid,
+    /// Owning broadcaster UUID (nullable for orphaned / legacy rows).
     pub user_id: Option<Uuid>,
+    /// MediaMTX path key (UUID v4 format).
     pub stream_key: String,
+    /// Display title.
     pub title: Option<String>,
+    /// Live/ended state machine status.
     pub status: stream::StreamStatus,
+    /// VOD post-processing status (transcode pipeline).
     pub vod_status: stream::VodStatus,
+    /// Public VOD playlist URL (set once transcoding finishes).
     pub hls_url: Option<String>,
+    /// Poster/thumbnail URL (live or VOD).
     pub thumbnail_url: Option<String>,
+    /// Ephemeral playback URLs resolved against the routing MTX instance.
     pub urls: StreamUrls,
+    /// Time the stream went live.
     pub started_at: Option<chrono::DateTime<Utc>>,
+    /// Time the stream ended.
     pub ended_at: Option<chrono::DateTime<Utc>>,
+    /// Creation timestamp.
     pub created_at: chrono::DateTime<Utc>,
 }
 
+/// Playback / publish URLs that change based on which MediaMTX instance a
+/// stream is currently routed to. All fields are `None` when the stream is
+/// not live.
 #[derive(Debug, Serialize)]
 pub struct StreamUrls {
+    /// WHIP publish endpoint (broadcasters). Currently always `None` in the
+    /// list response — issued by `POST /v1/streams/:id/token` instead.
     pub whip: Option<String>,
+    /// WHEP playback endpoint for low-latency viewers.
     pub whep: Option<String>,
+    /// LL-HLS playlist URL for mass playback.
     pub hls: Option<String>,
 }
 
@@ -72,17 +100,31 @@ pub(crate) struct Pagination {
     total_pages: u64,
 }
 
+/// Compact stream representation used by the live and VOD listing endpoints.
+///
+/// Omits owner-specific / creation metadata for lighter payloads on the
+/// public home page.
 #[derive(Debug, Serialize)]
 pub struct LiveStreamResponse {
+    /// Stream UUID.
     pub id: Uuid,
+    /// MediaMTX path key.
     pub stream_key: String,
+    /// Display title.
     pub title: Option<String>,
+    /// Stream lifecycle status.
     pub status: stream::StreamStatus,
+    /// VOD post-processing status.
     pub vod_status: stream::VodStatus,
+    /// Public VOD playlist URL.
     pub hls_url: Option<String>,
+    /// Poster/thumbnail URL.
     pub thumbnail_url: Option<String>,
+    /// Time the stream went live.
     pub started_at: Option<chrono::DateTime<Utc>>,
+    /// Time the stream ended.
     pub ended_at: Option<chrono::DateTime<Utc>>,
+    /// Ephemeral playback URLs.
     pub urls: StreamUrls,
 }
 
@@ -151,7 +193,12 @@ async fn build_stream_response(state: &AppState, model: stream::Model) -> Stream
     }
 }
 
-/// GET /v1/streams/vod
+/// `GET /v1/streams/vod` — list streams with a ready VOD asset.
+///
+/// Public (no auth). Used by the viewer index page.
+///
+/// # Errors
+/// - 500 on DB failure
 #[tracing::instrument(skip(state))]
 pub(crate) async fn list_vod_streams(
     State(state): State<AppState>,
@@ -166,7 +213,12 @@ pub(crate) async fn list_vod_streams(
     Ok(Json(DataResponse { data }))
 }
 
-/// GET /v1/streams/live
+/// `GET /v1/streams/live` — list currently live streams with resolved WHEP/HLS URLs.
+///
+/// Public (no auth).
+///
+/// # Errors
+/// - 500 on DB failure
 #[tracing::instrument(skip(state))]
 pub(crate) async fn list_live_streams(
     State(state): State<AppState>,
@@ -181,7 +233,14 @@ pub(crate) async fn list_live_streams(
     Ok(Json(DataResponse { data }))
 }
 
-/// POST /v1/streams
+/// `POST /v1/streams` — create a new stream row in `Pending`.
+///
+/// Returns 201 with `StreamResponse`. The stream key is the row's UUID v4.
+///
+/// # Errors
+/// - 401 if unauthenticated
+/// - 403 if the caller is not a broadcaster/admin
+/// - 500 on DB failure
 #[tracing::instrument(skip(state, payload), fields(user_id = %current_user.id))]
 pub(crate) async fn create_stream(
     current_user: CurrentUser,
@@ -220,7 +279,12 @@ pub(crate) async fn create_stream(
     Ok((StatusCode::CREATED, Json(DataResponse { data: resp })))
 }
 
-/// GET /v1/streams
+/// `GET /v1/streams` — paginated list of the caller's own streams.
+///
+/// # Errors
+/// - 400 on invalid `status` filter
+/// - 401 if unauthenticated
+/// - 500 on DB failure
 #[tracing::instrument(skip(state, params), fields(user_id = %current_user.id))]
 pub(crate) async fn list_streams(
     current_user: CurrentUser,
@@ -266,7 +330,13 @@ pub(crate) async fn list_streams(
     }))
 }
 
-/// GET /v1/streams/:id
+/// `GET /v1/streams/:id` — fetch a single stream by id.
+///
+/// Public (no auth).
+///
+/// # Errors
+/// - 404 `STREAM_NOT_FOUND`
+/// - 500 on DB failure
 #[tracing::instrument(skip(state), fields(stream_id = %id))]
 pub(crate) async fn get_stream(
     State(state): State<AppState>,
@@ -283,7 +353,13 @@ pub(crate) async fn get_stream(
     Ok(Json(DataResponse { data: resp }))
 }
 
-/// PATCH /v1/streams/:id
+/// `PATCH /v1/streams/:id` — update mutable stream fields (currently `title`).
+///
+/// # Errors
+/// - 401 if unauthenticated
+/// - 403 if the caller is not the stream owner
+/// - 404 `STREAM_NOT_FOUND`
+/// - 500 on DB failure
 #[tracing::instrument(skip(state, payload), fields(stream_id = %id, user_id = %current_user.id))]
 pub(crate) async fn update_stream(
     current_user: CurrentUser,
@@ -318,7 +394,16 @@ pub(crate) async fn update_stream(
     Ok(Json(DataResponse { data: resp }))
 }
 
-/// DELETE /v1/streams/:id
+/// `DELETE /v1/streams/:id` — delete a stream that is not currently live.
+///
+/// Returns 204 on success.
+///
+/// # Errors
+/// - 401 if unauthenticated
+/// - 403 if the caller is not the stream owner
+/// - 404 `STREAM_NOT_FOUND`
+/// - 409 `STREAM_CANNOT_DELETE` if status is `Live`
+/// - 500 on DB failure
 #[tracing::instrument(skip(state), fields(stream_id = %id, user_id = %current_user.id))]
 pub(crate) async fn delete_stream(
     current_user: CurrentUser,
@@ -347,7 +432,17 @@ pub(crate) async fn delete_stream(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// POST /v1/streams/:id/end
+/// `POST /v1/streams/:id/end` — owner-initiated transition from `Live` to `Ended`.
+///
+/// Useful when the publisher disconnects uncleanly and MediaMTX never fires
+/// the unpublish webhook.
+///
+/// # Errors
+/// - 401 if unauthenticated
+/// - 403 if the caller is not the stream owner
+/// - 404 `STREAM_NOT_FOUND`
+/// - 409 `STREAM_NOT_LIVE` if the stream is not currently `Live`
+/// - 500 on DB failure
 #[tracing::instrument(skip(state), fields(stream_id = %id, user_id = %current_user.id))]
 pub(crate) async fn end_stream(
     current_user: CurrentUser,
@@ -384,16 +479,33 @@ pub(crate) async fn end_stream(
     Ok(Json(DataResponse { data: resp }))
 }
 
+/// Response for `POST /v1/streams/:id/token`.
 #[derive(Debug, Serialize)]
 pub struct StreamTokenResponse {
+    /// Raw stream token (only value the client ever sees; stored hashed in Redis).
     pub token: String,
+    /// Token expiry instant.
     pub expires_at: chrono::DateTime<Utc>,
+    /// Fully-qualified WHIP URL the broadcaster should publish to; includes
+    /// the token and session query params.
     pub whip_url: String,
 }
 
 const STREAM_TOKEN_TTL_SECS: u64 = 3600;
 
-/// POST /v1/streams/:id/token
+/// `POST /v1/streams/:id/token` — issue a one-hour publish token and bind the
+/// stream to a healthy MediaMTX instance.
+///
+/// Picks the least-loaded MTX, creates a session row, persists the hashed
+/// token in Redis with TTL auto-cleanup, and returns the raw token plus the
+/// full WHIP URL the broadcaster should use.
+///
+/// # Errors
+/// - 401 if unauthenticated
+/// - 403 if the caller is not a broadcaster/admin or not the stream owner
+/// - 404 `STREAM_NOT_FOUND`
+/// - 500 when no healthy MTX instance is available, session creation fails,
+///   or Redis writes fail
 #[tracing::instrument(skip(state), fields(stream_id = %id, user_id = %current_user.id))]
 pub(crate) async fn create_stream_token(
     current_user: CurrentUser,
@@ -470,13 +582,20 @@ pub(crate) async fn create_stream_token(
     ))
 }
 
+/// A single recorded segment produced by MediaMTX.
 #[derive(Debug, Serialize)]
 pub struct RecordingResponse {
+    /// Recording UUID.
     pub id: Uuid,
+    /// Owning stream UUID.
     pub stream_id: Uuid,
+    /// Storage path (container-internal path reported by MediaMTX).
     pub file_path: String,
+    /// Segment duration in seconds, if known.
     pub duration_secs: Option<i64>,
+    /// File size in bytes, if readable when the hook fired.
     pub file_size_bytes: Option<i64>,
+    /// Segment creation timestamp.
     pub created_at: chrono::DateTime<Utc>,
 }
 
@@ -491,13 +610,20 @@ fn build_recording_response(model: entity::recording::Model) -> RecordingRespons
     }
 }
 
+/// Query string for `GET /v1/streams/:id/recordings`.
 #[derive(Debug, Deserialize)]
 pub struct ListRecordingsQuery {
+    /// 1-indexed page number. Defaults to 1.
     pub page: Option<u64>,
+    /// Page size, capped at 100. Defaults to 20.
     pub per_page: Option<u64>,
 }
 
-/// GET /v1/streams/:id/recordings
+/// `GET /v1/streams/:id/recordings` — paginated list of recorded segments.
+///
+/// # Errors
+/// - 404 `STREAM_NOT_FOUND`
+/// - 500 on DB failure
 #[tracing::instrument(skip(state, params), fields(stream_id = %id))]
 pub(crate) async fn list_recordings(
     State(state): State<AppState>,

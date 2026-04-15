@@ -13,12 +13,16 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+/// JSON body sent by MediaMTX for `runOnPublish` / `runOnUnpublish` hooks.
 #[derive(Debug, Deserialize)]
 pub struct PublishHookPayload {
+    /// MediaMTX path (equals stream key).
     pub stream_key: String,
+    /// `"publish"` or `"unpublish"`.
     pub action: String,
 }
 
+/// Query string for the publish webhook.
 #[derive(Debug, Deserialize)]
 pub struct PublishHookQuery {
     /// MediaMTX instance name that sent the webhook (e.g. "mtx-1")
@@ -48,8 +52,21 @@ fn parse_session_from_query(raw: &str) -> Option<Uuid> {
     None
 }
 
-/// POST /internal/hooks/publish?mtx={name}&query={mtx_query_string}
-/// Called by MediaMTX on publish/unpublish events.
+/// `POST /internal/hooks/publish?mtx={name}&query={mtx_query_string}` —
+/// MediaMTX publish / unpublish webhook.
+///
+/// On `publish`: verifies the session is the active one for this stream and
+/// came from the expected MTX, flips status to `Live`, increments the MTX
+/// stream counter, fans out a live-streams event, and spawns the thumbnail
+/// capture task. On `unpublish`: handles the stream migration / stale-session
+/// cases and, when current, ends the stream and kicks off VOD transcoding.
+///
+/// Internal; not exposed outside the cluster.
+///
+/// # Errors
+/// - 404 if the stream key is unknown
+/// - 400 for unrecognised `action`
+/// - 500 on Redis / DB failure
 #[tracing::instrument(skip(state, payload), fields(stream_key = %payload.stream_key, action = %payload.action))]
 pub(crate) async fn publish_hook(
     State(state): State<AppState>,
@@ -398,7 +415,8 @@ async fn cancel_thumbnail_task(state: &AppState, stream_id: Uuid) {
     }
 }
 
-/// Publish the current live streams list via Redis PubSub so all API instances push to WS clients.
+/// Publish the current live-streams list on Redis `streamhub:events` so every
+/// API instance can push an updated snapshot to its WebSocket clients.
 pub(crate) async fn publish_live_streams_event(state: &AppState) -> Result<(), anyhow::Error> {
     let live_models = state.uow.stream_repo().list_live().await?;
     let mut data = Vec::with_capacity(live_models.len());
