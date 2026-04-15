@@ -1,3 +1,12 @@
+//! Cache and pub/sub abstractions used across the workspace.
+//!
+//! Two traits are exposed: [`CacheStore`] for key/value storage with optional
+//! TTL (session state, MTX routing counters, stream tokens), and [`PubSub`]
+//! for cross-instance event fan-out (viewer count updates, stream lifecycle
+//! notifications). Each has a Redis-backed production impl and an in-memory
+//! impl used by tests.
+#![warn(missing_docs)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -6,15 +15,23 @@ use deadpool_redis::Pool as RedisPool;
 use deadpool_redis::redis::AsyncCommands;
 use tokio::sync::{Mutex, broadcast};
 
-/// Key-value cache abstraction with optional TTL.
+/// Key-value cache with optional per-key TTL. All implementations are `Send + Sync`.
 #[async_trait]
 pub trait CacheStore: Send + Sync {
+    /// Returns the value for `key`, or `None` if it is not set.
     async fn get(&self, key: &str) -> Result<Option<String>, anyhow::Error>;
+
+    /// Stores `value` at `key`. If `ttl_secs` is `Some`, the key expires after
+    /// that many seconds; otherwise it lives until explicitly deleted.
     async fn set(&self, key: &str, value: &str, ttl_secs: Option<u64>)
     -> Result<(), anyhow::Error>;
+
+    /// Deletes `key`. Missing keys are not an error.
     async fn del(&self, key: &str) -> Result<(), anyhow::Error>;
 
-    /// SET if Not eXists. Returns true if key was set, false if already exists.
+    /// SET if Not eXists. Returns `true` if the key was set, `false` if it
+    /// already existed. When `ttl_secs` is `Some`, the key expires after the
+    /// given seconds. Used to implement distributed locks.
     async fn set_nx(
         &self,
         key: &str,
@@ -23,12 +40,14 @@ pub trait CacheStore: Send + Sync {
     ) -> Result<bool, anyhow::Error>;
 }
 
-/// In-memory CacheStore using a HashMap (no TTL enforcement).
+/// In-memory [`CacheStore`] backed by a `HashMap`. TTLs are accepted but not
+/// enforced; intended for unit tests only.
 pub struct InMemoryCache {
     data: Mutex<HashMap<String, String>>,
 }
 
 impl InMemoryCache {
+    /// Creates an empty cache.
     pub fn new() -> Self {
         Self {
             data: Mutex::new(HashMap::new()),
@@ -82,12 +101,13 @@ impl CacheStore for InMemoryCache {
     }
 }
 
-/// Redis-backed CacheStore using deadpool-redis.
+/// Redis-backed [`CacheStore`] using a `deadpool-redis` connection pool.
 pub struct RedisCacheStore {
     pool: RedisPool,
 }
 
 impl RedisCacheStore {
+    /// Wraps the given connection pool.
     pub fn new(pool: RedisPool) -> Self {
         Self { pool }
     }
@@ -148,12 +168,13 @@ impl CacheStore for RedisCacheStore {
     }
 }
 
-/// In-memory PubSub for testing (messages are broadcast locally).
+/// In-memory [`PubSub`] for tests. Messages are fanned out via `tokio::sync::broadcast`.
 pub struct InMemoryPubSub {
     senders: Mutex<HashMap<String, Arc<broadcast::Sender<String>>>>,
 }
 
 impl InMemoryPubSub {
+    /// Creates an empty pub/sub with no channels.
     pub fn new() -> Self {
         Self {
             senders: Mutex::new(HashMap::new()),
@@ -189,25 +210,31 @@ impl PubSub for InMemoryPubSub {
     }
 }
 
-/// Pub/Sub abstraction for cross-instance event distribution.
+/// Pub/sub abstraction for cross-instance event distribution.
 #[async_trait]
 pub trait PubSub: Send + Sync {
-    /// Publish a message to a channel.
+    /// Publishes `msg` to `channel`. Delivery is fire-and-forget.
     async fn publish(&self, channel: &str, msg: &str) -> Result<(), anyhow::Error>;
 
-    /// Subscribe to a channel. Returns a broadcast receiver for incoming messages.
+    /// Subscribes to `channel` and returns a receiver for incoming messages.
+    /// Each call yields an independent receiver; all receivers for the same
+    /// channel observe the same stream of messages.
     async fn subscribe(&self, channel: &str) -> Result<broadcast::Receiver<String>, anyhow::Error>;
 }
 
-/// Redis-backed PubSub using deadpool-redis for PUBLISH and a dedicated connection for SUBSCRIBE.
+/// Redis-backed [`PubSub`]. `PUBLISH` goes through the shared pool; each
+/// subscribed channel spawns a dedicated connection in a background task that
+/// forwards Redis messages to a `tokio::sync::broadcast` channel shared by all
+/// local subscribers.
 pub struct RedisPubSub {
     pool: RedisPool,
     redis_url: String,
-    /// Shared broadcast senders per channel (lazily created on first subscribe).
     senders: Mutex<HashMap<String, Arc<broadcast::Sender<String>>>>,
 }
 
 impl RedisPubSub {
+    /// Creates a new `RedisPubSub` using `pool` for publishes and `redis_url`
+    /// when opening dedicated subscription connections.
     pub fn new(pool: RedisPool, redis_url: String) -> Self {
         Self {
             pool,
@@ -236,12 +263,10 @@ impl PubSub for RedisPubSub {
             return Ok(tx.subscribe());
         }
 
-        // Create a new broadcast channel (buffer 256 messages)
         let (tx, rx) = broadcast::channel(256);
         let tx = Arc::new(tx);
         senders.insert(channel.to_string(), tx.clone());
 
-        // Spawn a dedicated connection for SUBSCRIBE (cannot use pool — blocking op)
         let client = deadpool_redis::redis::Client::open(self.redis_url.as_str())?;
         let mut pubsub_conn = client.get_async_pubsub().await?;
         pubsub_conn.subscribe(channel).await?;
@@ -252,7 +277,6 @@ impl PubSub for RedisPubSub {
             use tokio_stream::StreamExt as _;
             while let Some(msg) = msg_stream.next().await {
                 if let Ok(payload) = msg.get_payload::<String>() {
-                    // If all receivers dropped, the send will fail — that's fine
                     let _ = tx.send(payload);
                 }
             }

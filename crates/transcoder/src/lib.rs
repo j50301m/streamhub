@@ -1,20 +1,35 @@
+//! Media processing helpers: local ffmpeg wrappers (HLS transcode, thumbnail
+//! extraction, live HLS snapshot, MP4 concat) and a GCP Transcoder API client
+//! for multi-resolution ABR HLS jobs.
+#![warn(missing_docs)]
+
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
+/// Errors from transcoder operations.
 #[derive(Debug, thiserror::Error)]
 pub enum TranscoderError {
+    /// ffmpeg exited non-zero. The payload is its stderr output.
     #[error("ffmpeg failed: {0}")]
     FfmpegFailed(String),
+    /// Local filesystem or process IO error.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// GCP Transcoder API returned a non-success response.
     #[error("API error: {0}")]
     Api(String),
+    /// HTTP transport error when calling the Transcoder API.
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 }
 
-/// Transcode an MP4 file to HLS (m3u8 + ts segments) in the given output directory.
-/// Returns the path to the generated m3u8 playlist.
+/// Transcodes (stream-copies) an MP4 into HLS (`index.m3u8` + `seg_NNN.ts`)
+/// inside `output_dir` using the local `ffmpeg` binary. Returns the path to
+/// the generated playlist.
+///
+/// # Errors
+/// Returns [`TranscoderError::FfmpegFailed`] if `ffmpeg` exits non-zero, or
+/// [`TranscoderError::Io`] on filesystem errors.
 #[tracing::instrument]
 pub async fn transcode_to_hls(
     input_mp4: &Path,
@@ -58,8 +73,12 @@ pub async fn transcode_to_hls(
     Ok(output_m3u8)
 }
 
-/// Extract a single thumbnail frame from an MP4 file using ffmpeg.
-/// Returns the path to the generated JPEG file.
+/// Extracts a single thumbnail frame from `input_mp4` and writes it to
+/// `output_jpg` using `ffmpeg`.
+///
+/// # Errors
+/// Returns [`TranscoderError::FfmpegFailed`] if `ffmpeg` exits non-zero, or
+/// [`TranscoderError::Io`] on filesystem errors.
 #[tracing::instrument]
 pub async fn extract_thumbnail(
     input_mp4: &Path,
@@ -99,8 +118,12 @@ pub async fn extract_thumbnail(
     Ok(output_jpg.to_path_buf())
 }
 
-/// Capture a single frame from an HLS stream and save as JPEG.
-/// Used for periodic live thumbnail generation.
+/// Captures one frame from the live HLS stream at `hls_url` and writes it to
+/// `output_path`. Used by the live-thumbnail task.
+///
+/// # Errors
+/// Returns [`TranscoderError::FfmpegFailed`] if `ffmpeg` exits non-zero, or
+/// [`TranscoderError::Io`] on filesystem errors.
 #[tracing::instrument]
 pub async fn capture_hls_thumbnail(
     hls_url: &str,
@@ -140,8 +163,13 @@ pub async fn capture_hls_thumbnail(
     Ok(output_path.to_path_buf())
 }
 
-/// Concatenate multiple MP4 files into a single MP4 using ffmpeg concat demuxer.
-/// Returns the path to the combined output file.
+/// Concatenates `input_files` into a single MP4 at `output_path` using the
+/// `ffmpeg` concat demuxer. A single-file input is returned as-is without
+/// invoking ffmpeg.
+///
+/// # Errors
+/// Returns [`TranscoderError::FfmpegFailed`] if `ffmpeg` exits non-zero, or
+/// [`TranscoderError::Io`] on filesystem errors.
 #[tracing::instrument(fields(files = input_files.len()))]
 pub async fn concat_mp4(
     input_files: &[PathBuf],
@@ -198,9 +226,16 @@ pub async fn concat_mp4(
     Ok(output_path.to_path_buf())
 }
 
-/// Create a GCP Transcoder API job to transcode an MP4 into multi-resolution ABR HLS.
+/// Submits a GCP Transcoder API job to transcode `input_uri` into
+/// multi-resolution ABR HLS at `output_uri`. The `stream_id` is attached as
+/// a job label for traceability.
 ///
-/// Returns the job name (e.g. `projects/{p}/locations/{l}/jobs/{id}`).
+/// Returns the job resource name
+/// (e.g. `projects/{p}/locations/{l}/jobs/{id}`).
+///
+/// # Errors
+/// Returns [`TranscoderError::Api`] on a non-success HTTP response, or
+/// [`TranscoderError::Http`] on transport failure.
 #[tracing::instrument(skip(auth_token))]
 pub async fn create_job(
     project_id: &str,
@@ -333,7 +368,13 @@ pub async fn create_job(
     Ok(job_name)
 }
 
-/// Obtain a GCP access token using `gcloud auth print-access-token`.
+/// Obtains a GCP access token by shelling out to `gcloud auth
+/// print-access-token`. Suitable for local dev; production should use
+/// Workload Identity instead.
+///
+/// # Errors
+/// Returns [`TranscoderError::Api`] if `gcloud` exits non-zero, or
+/// [`TranscoderError::Io`] if the binary cannot be spawned.
 pub async fn get_gcp_token() -> Result<String, TranscoderError> {
     let output = Command::new("gcloud")
         .args(["auth", "print-access-token"])

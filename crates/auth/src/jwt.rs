@@ -1,34 +1,42 @@
+//! JWT signing and verification for user access / refresh tokens.
+
 use chrono::{Duration, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Errors produced while signing or verifying a JWT.
 #[derive(Debug, thiserror::Error)]
 pub enum JwtError {
+    /// Token signature parsed but the `exp` claim is in the past.
     #[error("token expired")]
     Expired,
+    /// Token is malformed, has a bad signature, or fails validation for any
+    /// reason other than expiry.
     #[error("token invalid")]
     Invalid,
 }
 
+/// Claims embedded in access and refresh tokens.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    /// Subject — user ID
+    /// User ID this token was issued to.
     pub sub: Uuid,
-    /// Token type: "access" or "refresh"
+    /// Token type: `"access"` or `"refresh"`.
     pub typ: String,
-    /// Issued at (unix timestamp)
+    /// Issued-at time as a unix timestamp (seconds).
     pub iat: i64,
-    /// Expiration (unix timestamp)
+    /// Expiration time as a unix timestamp (seconds).
     pub exp: i64,
 }
 
-/// Access token validity: 24 hours.
 const ACCESS_TOKEN_HOURS: i64 = 24;
-/// Refresh token validity: 30 days.
 const REFRESH_TOKEN_DAYS: i64 = 30;
 
-/// Sign an access token (24h).
+/// Signs a 24-hour access token for `user_id`.
+///
+/// # Errors
+/// Returns [`JwtError::Invalid`] if encoding fails.
 pub fn sign_access_token(user_id: Uuid, secret: &str) -> Result<String, JwtError> {
     sign_token(
         user_id,
@@ -38,7 +46,10 @@ pub fn sign_access_token(user_id: Uuid, secret: &str) -> Result<String, JwtError
     )
 }
 
-/// Sign a refresh token (30d).
+/// Signs a 30-day refresh token for `user_id`.
+///
+/// # Errors
+/// Returns [`JwtError::Invalid`] if encoding fails.
 pub fn sign_refresh_token(user_id: Uuid, secret: &str) -> Result<String, JwtError> {
     sign_token(
         user_id,
@@ -69,7 +80,11 @@ fn sign_token(
     .map_err(|_| JwtError::Invalid)
 }
 
-/// Verify and decode a JWT token. Returns claims if valid.
+/// Verifies `token` against `secret` and returns its claims.
+///
+/// # Errors
+/// - [`JwtError::Expired`] if the token's `exp` is in the past.
+/// - [`JwtError::Invalid`] for any other validation or parse failure.
 pub fn verify_token(token: &str, secret: &str) -> Result<Claims, JwtError> {
     let data = decode::<Claims>(
         token,
@@ -86,7 +101,7 @@ pub fn verify_token(token: &str, secret: &str) -> Result<Claims, JwtError> {
     Ok(data.claims)
 }
 
-/// Returns the number of seconds until an access token expires (24h).
+/// Seconds until a newly issued access token expires (24 hours).
 pub fn access_token_expires_in() -> i64 {
     ACCESS_TOKEN_HOURS * 3600
 }

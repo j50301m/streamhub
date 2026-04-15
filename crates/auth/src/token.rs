@@ -1,12 +1,15 @@
+//! Opaque stream tokens: random secrets a broadcaster presents to MediaMTX via
+//! WHIP. Only their SHA-256 hashes are persisted in Redis.
+
 use sha2::{Digest, Sha256};
 
-/// Generate a random stream token (32 bytes, hex-encoded = 64 chars).
+/// Generates a fresh 32-byte random stream token, hex-encoded as 64 chars.
 pub fn generate_stream_token() -> String {
     let bytes: [u8; 32] = rand::random();
     hex_encode(&bytes)
 }
 
-/// SHA-256 hash a token string, returning hex-encoded hash.
+/// Returns the hex-encoded SHA-256 hash of `token`, suitable as a Redis lookup key.
 pub fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
