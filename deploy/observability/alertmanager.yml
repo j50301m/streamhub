@@ -1,0 +1,56 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: telegram-warning
+  group_by: ['alertname']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: telegram-critical
+      group_wait: 10s
+      group_interval: 5m
+      repeat_interval: 1h
+
+receivers:
+  - name: telegram-critical
+    telegram_configs:
+      - bot_token: '${TELEGRAM_BOT_TOKEN}'
+        chat_id: ${TELEGRAM_CHAT_ID}
+        api_url: https://api.telegram.org
+        parse_mode: HTML
+        send_resolved: true
+        message: |
+          🚨 <b>[CRITICAL] {{ .CommonLabels.alertname }}</b>
+
+          <b>Summary:</b> {{ .CommonAnnotations.summary }}
+          <b>Description:</b> {{ .CommonAnnotations.description }}
+
+          <b>Started:</b> {{ (index .Alerts 0).StartsAt }}
+          <b>Firing:</b> {{ .Alerts.Firing | len }}
+
+  - name: telegram-warning
+    telegram_configs:
+      - bot_token: '${TELEGRAM_BOT_TOKEN}'
+        chat_id: ${TELEGRAM_CHAT_ID}
+        api_url: https://api.telegram.org
+        parse_mode: HTML
+        send_resolved: true
+        message: |
+          ⚠️ <b>[WARNING] {{ .CommonLabels.alertname }}</b>
+
+          <b>Summary:</b> {{ .CommonAnnotations.summary }}
+          <b>Description:</b> {{ .CommonAnnotations.description }}
+
+          <b>Started:</b> {{ (index .Alerts 0).StartsAt }}
+          <b>Firing:</b> {{ .Alerts.Firing | len }}
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: ['alertname']

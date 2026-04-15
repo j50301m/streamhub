@@ -1,0 +1,79 @@
+groups:
+  - name: streamhub_critical
+    interval: 10s
+    rules:
+      - alert: ApiDown
+        expr: up{job="streamhub-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "streamhub-api is down"
+          description: "Prometheus cannot scrape streamhub-api ({{ $labels.instance }}) for over 1m."
+
+      - alert: High5xxRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+          sum(rate(http_requests_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "5xx error rate above 5%"
+          description: "5xx ratio is {{ $value | humanizePercentage }} over the last 5m."
+
+      - alert: NodeDiskFull
+        expr: |
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+            /
+          node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) < 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node disk almost full ({{ $labels.mountpoint }})"
+          description: "Available {{ $value | humanizePercentage }} on {{ $labels.instance }}:{{ $labels.mountpoint }}."
+
+  - name: streamhub_warning
+    interval: 30s
+    rules:
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 HTTP latency above 2s"
+          description: "p95 latency is {{ $value }}s over the last 5m."
+
+      - alert: NodeHighMemory
+        expr: |
+          (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node memory above 85%"
+          description: "Memory usage on {{ $labels.instance }} is {{ $value | humanizePercentage }}."
+
+      - alert: NodeExporterDown
+        expr: up{job="node-exporter"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "node-exporter is down"
+          description: "Prometheus cannot scrape node-exporter ({{ $labels.instance }}) for over 5m."
+
+      - alert: PrometheusReloadFailed
+        expr: prometheus_config_last_reload_successful == 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus config reload failed"
+          description: "Last Prometheus config reload was unsuccessful — fix prometheus.yml or rule files."
