@@ -1,3 +1,18 @@
+//! MediaMTX routing, session lifecycle, and health checking.
+//!
+//! The API server does not proxy media itself; clients connect directly to one
+//! of several MediaMTX instances. This crate owns the logic for picking an
+//! instance, tracking which stream lives on which instance via Redis, and
+//! detecting instance failures.
+//!
+//! Key Redis layout (see [`keys`]):
+//!
+//! - `stream:{stream_id}:active_session` → session UUID
+//! - `session:{session_id}:mtx` → MTX instance name
+//! - `session:{session_id}:stream_id` → stream UUID
+//! - `mtx:{name}:stream_count`, `mtx:{name}:status`
+#![warn(missing_docs)]
+
 pub mod keys;
 
 use cache::CacheStore;
@@ -9,19 +24,28 @@ use uuid::Uuid;
 /// A single MediaMTX instance with its internal and public URLs.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MtxInstance {
+    /// Stable identifier used as the Redis key suffix and in logs.
     pub name: String,
-    /// Internal API URL for health checks and management (e.g. http://mtx-1:9997)
+    /// Internal API URL for health checks and management
+    /// (e.g. `http://mtx-1:9997`).
     pub internal_api: String,
-    /// Public WHIP URL for browser push (e.g. http://localhost:8889)
+    /// Public WHIP URL for browser push (e.g. `http://localhost:8889`).
     pub public_whip: String,
-    /// Public WHEP URL for browser playback (e.g. http://localhost:8889)
+    /// Public WHEP URL for browser playback (e.g. `http://localhost:8889`).
     pub public_whep: String,
-    /// Public HLS URL for browser playback (e.g. http://localhost:8888)
+    /// Public HLS URL for browser playback (e.g. `http://localhost:8888`).
     pub public_hls: String,
 }
 
-/// Parse MEDIAMTX_INSTANCES JSON into a Vec<MtxInstance>.
-/// Returns an empty Vec if the input is empty.
+/// Parses the `MEDIAMTX_INSTANCES` JSON string into a vector of instances.
+///
+/// An empty input yields an empty vector (for the single-MTX dev setup where
+/// the variable is unset).
+///
+/// # Panics
+/// Panics if `json` is non-empty but not a valid JSON array of
+/// [`MtxInstance`]. Parsing happens at startup so a loud failure is preferred
+/// over silently running with no instances.
 pub fn parse_mtx_instances(json: &str) -> Vec<MtxInstance> {
     if json.is_empty() {
         return Vec::new();
@@ -30,7 +54,13 @@ pub fn parse_mtx_instances(json: &str) -> Vec<MtxInstance> {
         .expect("MEDIAMTX_INSTANCES must be a valid JSON array of MtxInstance objects")
 }
 
-/// Select the healthiest MediaMTX instance with the lowest stream count.
+/// Selects the healthy MediaMTX instance with the lowest current stream count.
+///
+/// Unhealthy instances (per `mtx:{name}:status`) are skipped. Ties are broken
+/// by iteration order.
+///
+/// # Errors
+/// Returns an error if no instance is healthy, or if Redis access fails.
 #[tracing::instrument(skip(cache, instances))]
 pub async fn select_instance(
     cache: &dyn CacheStore,
@@ -67,11 +97,15 @@ pub async fn select_instance(
     .ok_or_else(|| anyhow::anyhow!("No healthy MediaMTX instances available"))
 }
 
-/// Create a new session: generate session_id, write session:* keys, and
-/// overwrite stream:{id}:active_session.
+/// Creates a new session: generates a `session_id`, writes the `session:*`
+/// keys, and overwrites `stream:{id}:active_session`.
 ///
-/// Returns the fresh session_id. The previous active session (if any) is NOT
-/// cleaned up here — it will be detected as stale when its webhook arrives.
+/// The previous active session (if any) is not cleaned up here; its eventual
+/// unpublish webhook is detected as stale and cleaned via
+/// [`cleanup_stale_session`].
+///
+/// # Errors
+/// Returns an error if any Redis write fails.
 #[tracing::instrument(skip(cache))]
 pub async fn create_session(
     cache: &dyn CacheStore,
@@ -111,7 +145,8 @@ pub async fn create_session(
     Ok(session_id)
 }
 
-/// Read the currently active session for a stream.
+/// Reads the currently active session for `stream_id`, or `None` if the
+/// stream has no active session or the stored value is malformed.
 pub async fn get_active_session(
     cache: &dyn CacheStore,
     stream_id: &Uuid,
@@ -123,7 +158,7 @@ pub async fn get_active_session(
     }
 }
 
-/// Read the MTX name associated with a session.
+/// Returns the MTX instance name a session was created on, if still recorded.
 pub async fn get_session_mtx(
     cache: &dyn CacheStore,
     session_id: &Uuid,
@@ -131,11 +166,17 @@ pub async fn get_session_mtx(
     cache.get(&keys::session_mtx(session_id)).await
 }
 
-/// End the currently active session for a stream.
+/// Ends the currently active session for a stream when its unpublish webhook
+/// arrives.
 ///
-/// This is called when an active-session unpublish arrives. It deletes all
-/// session:* keys and the stream:{id}:active_session pointer, then returns the
-/// mtx_name so the caller can DECR that instance's count.
+/// Deletes all `session:*` keys, clears `stream:{id}:active_session` *only if
+/// it still points at this session* (so a newer session that already took
+/// over is preserved), and decrements the hosting instance's stream count.
+///
+/// Returns the MTX instance name the session was hosted on, if known.
+///
+/// # Errors
+/// Returns an error if any Redis operation fails.
 #[tracing::instrument(skip(cache))]
 pub async fn end_session(
     cache: &dyn CacheStore,
@@ -148,8 +189,6 @@ pub async fn end_session(
     cache.del(&keys::session_stream_id(session_id)).await?;
     cache.del(&keys::session_started_at(session_id)).await?;
 
-    // Only clear active_session if it still points to us (avoid racing with a
-    // newer session that already overwrote it).
     if let Some(sid_str) = stream_id_str {
         if let Ok(stream_id) = sid_str.parse::<Uuid>() {
             let current = cache.get(&keys::stream_active_session(&stream_id)).await?;
@@ -160,7 +199,6 @@ pub async fn end_session(
     }
 
     if let Some(ref name) = mtx_name {
-        // DECR the mtx stream_count.
         let count_key = keys::mtx_stream_count(name);
         let current: i64 = cache
             .get(&count_key)
@@ -175,9 +213,15 @@ pub async fn end_session(
     Ok(mtx_name)
 }
 
-/// Clean up a stale session: deletes session:* keys (but not
-/// stream:{id}:active_session, which belongs to a newer session) and DECRs the
-/// session's original MTX count.
+/// Cleans up a stale session whose unpublish arrived after the stream already
+/// moved to a newer session.
+///
+/// Deletes the stale `session:*` keys (but not `stream:{id}:active_session`,
+/// which belongs to the newer session) and decrements the stale session's
+/// original MTX count. Returns the MTX instance name.
+///
+/// # Errors
+/// Returns an error if any Redis operation fails.
 #[tracing::instrument(skip(cache))]
 pub async fn cleanup_stale_session(
     cache: &dyn CacheStore,
@@ -204,12 +248,17 @@ pub async fn cleanup_stale_session(
     Ok(mtx_name)
 }
 
-/// Find all streams whose active session currently lives on `mtx_name`.
+/// Finds every stream whose active session currently lives on `mtx_name`.
 ///
-/// Iterates over the DB's live streams (bounded, small set) and checks
-/// stream:{id}:active_session → session:{sid}:mtx for each. Returns
-/// `(stream_id, session_id)` pairs for callers that need to clean up or
-/// migrate those streams (drain / health-check failure).
+/// Used to enumerate streams that must be drained or migrated when an
+/// instance is marked unhealthy. Iterates `live_stream_ids` (already
+/// bounded by a DB query) and checks each stream's active session →
+/// session MTX mapping.
+///
+/// Returns `(stream_id, session_id)` pairs for the matches.
+///
+/// # Errors
+/// Returns an error if any Redis operation fails.
 #[tracing::instrument(skip(cache, live_stream_ids))]
 pub async fn get_streams_on_mtx(
     cache: &dyn CacheStore,
@@ -231,13 +280,20 @@ pub async fn get_streams_on_mtx(
     Ok(hits)
 }
 
-/// Find an MtxInstance by name.
+/// Finds an [`MtxInstance`] by name, or returns `None` if no registered
+/// instance matches.
 pub fn find_instance<'a>(instances: &'a [MtxInstance], name: &str) -> Option<&'a MtxInstance> {
     instances.iter().find(|i| i.name == name)
 }
 
-/// Build stream URLs based on the stream's currently active session.
-/// Returns (whep_url, hls_url) or None if there is no active session.
+/// Builds `(whep_url, hls_url)` for a stream based on its active session's
+/// current MTX instance.
+///
+/// Returns `None` if the stream has no active session or the session points
+/// to an instance that is no longer in `instances`.
+///
+/// # Errors
+/// Returns an error if any Redis operation fails.
 pub async fn resolve_stream_urls(
     cache: &dyn CacheStore,
     instances: &[MtxInstance],
@@ -266,16 +322,24 @@ pub async fn resolve_stream_urls(
     Ok(Some((whep_url, hls_url)))
 }
 
-/// Health check context for tracking consecutive failures per instance.
+/// Health-check loop state for the registered MTX instances.
+///
+/// Holds a shared cache handle, the HTTP client used to probe each instance's
+/// internal API, and per-instance consecutive failure counts used to decide
+/// when to mark an instance unhealthy.
 pub struct HealthChecker {
+    /// Shared cache for writing `mtx:{name}:status`.
     pub cache: Arc<dyn CacheStore>,
+    /// Registered instances to probe.
     pub instances: Vec<MtxInstance>,
+    /// HTTP client with a 5s timeout shared across probes.
     pub http_client: reqwest::Client,
-    /// Track consecutive failure counts per instance name.
+    /// Consecutive failure counter keyed by instance name. Reset on success.
     pub failure_counts: std::collections::HashMap<String, u32>,
 }
 
 impl HealthChecker {
+    /// Creates a checker for `instances` using `cache` to publish status.
     pub fn new(cache: Arc<dyn CacheStore>, instances: Vec<MtxInstance>) -> Self {
         Self {
             cache,
@@ -288,8 +352,13 @@ impl HealthChecker {
         }
     }
 
-    /// Run one round of health checks for all instances.
-    /// Returns list of instances that just crossed the failure threshold (3).
+    /// Runs one round of health checks and returns the list of instances that
+    /// just crossed the failure threshold of 3 consecutive failures.
+    ///
+    /// Healthy instances get `mtx:{name}:status = "healthy"` with a 30s TTL
+    /// (so a crashed instance auto-expires). Unhealthy instances past the
+    /// threshold get `"unhealthy"` with no TTL until the next successful
+    /// probe.
     pub async fn check_all(&mut self) -> Vec<MtxInstance> {
         let mut newly_failed = Vec::new();
 

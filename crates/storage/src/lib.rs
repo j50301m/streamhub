@@ -1,30 +1,40 @@
+//! Object storage abstraction used for uploading recordings and HLS VOD
+//! assets. Production uses [`GcsStorage`] against GCS (or fake-gcs-server in
+//! dev); tests use [`MockStorage`].
+#![warn(missing_docs)]
+
 use async_trait::async_trait;
 use std::path::Path;
 
+/// Errors from object storage operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
+    /// Upload request failed at the HTTP layer or the server rejected it.
     #[error("upload failed: {0}")]
     Upload(String),
+    /// Local filesystem IO error while reading the source file or directory.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
 
-/// Object storage abstraction. Handlers only depend on this trait.
+/// Object storage abstraction. Handlers depend only on this trait.
 #[async_trait]
 pub trait ObjectStorage: Send + Sync {
-    /// Upload a single file, returns the storage key.
+    /// Uploads the file at `local_path` to the backend under `key` and
+    /// returns that key.
     async fn upload_file(&self, local_path: &Path, key: &str) -> Result<String, StorageError>;
 
-    /// Upload all files in a directory (non-recursive), returns list of keys.
+    /// Uploads every file directly inside `local_dir` (non-recursive) under
+    /// `prefix/` and returns the list of keys written.
     async fn upload_dir(&self, local_dir: &Path, prefix: &str)
     -> Result<Vec<String>, StorageError>;
 
-    /// Get the public URL for a storage key.
+    /// Returns the public URL a client can use to fetch `key`.
     fn public_url(&self, key: &str) -> String;
 }
 
-/// GCS implementation using JSON API via reqwest.
-/// Works with both real GCS and fake-gcs-server.
+/// GCS implementation using the JSON API via reqwest. Works against both the
+/// real GCS service and fake-gcs-server.
 pub struct GcsStorage {
     client: reqwest::Client,
     bucket: String,
@@ -34,13 +44,16 @@ pub struct GcsStorage {
 }
 
 impl GcsStorage {
-    /// Create a new GCS storage client.
+    /// Creates a new GCS storage client.
     ///
-    /// - `bucket`: GCS bucket name
-    /// - `endpoint`: Custom endpoint URL (e.g. `http://fake-gcs:4443` for local dev).
-    ///   If None, uses the real GCS endpoint.
-    /// - `credentials_path`: Path to service account JSON key file.
-    ///   If None, uses Application Default Credentials (ADC).
+    /// - `bucket`: GCS bucket name.
+    /// - `endpoint`: Custom endpoint URL (e.g. `http://fake-gcs:4443` for
+    ///   local dev); `None` uses the real GCS endpoint.
+    /// - `credentials_path`: Path to a service-account JSON key file; `None`
+    ///   uses Application Default Credentials.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::Upload`] if building the HTTP client fails.
     pub async fn new(
         bucket: &str,
         endpoint: Option<&str>,
@@ -75,8 +88,12 @@ impl GcsStorage {
         })
     }
 
-    /// Ensure the bucket exists (for fake-gcs-server).
-    /// On real GCS this is a no-op since the bucket should be pre-created.
+    /// Ensures the bucket exists. Intended for fake-gcs-server setup; on real
+    /// GCS the bucket should be pre-created and this effectively no-ops on
+    /// 409 Conflict.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::Upload`] if the HTTP request itself fails.
     pub async fn ensure_bucket(&self) -> Result<(), StorageError> {
         let url = format!("{}/storage/v1/b", self.base_url);
         let body = format!(r#"{{"name":"{}"}}"#, self.bucket);
@@ -198,8 +215,10 @@ async fn load_access_token(_credentials_path: Option<&str>) -> Result<String, St
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Mock storage for testing. Available to all crates.
+/// In-memory storage stub for tests. Records every uploaded key without
+/// actually writing anywhere.
 pub struct MockStorage {
+    /// Keys observed by `upload_file` / `upload_dir`, in call order.
     pub uploaded: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
@@ -210,6 +229,7 @@ impl Default for MockStorage {
 }
 
 impl MockStorage {
+    /// Creates an empty mock.
     pub fn new() -> Self {
         Self {
             uploaded: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),

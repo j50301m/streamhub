@@ -1,33 +1,47 @@
+//! Unified application error type. Implements [`IntoResponse`] so handlers can
+//! return `Result<_, AppError>` directly.
+
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
+/// Top-level error returned from route handlers. Each variant maps to an HTTP
+/// status and a JSON `{ "error": { "code", "message" } }` body.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    /// 404 Not Found. The string is the machine-readable error code.
     #[error("Not found: {0}")]
     NotFound(String),
 
+    /// 400 Bad Request. The string is a human-readable message.
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    /// 401 Unauthorized. The string is the machine-readable error code.
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
+    /// 403 Forbidden. The string is a human-readable message.
     #[error("Forbidden: {0}")]
     Forbidden(String),
 
+    /// 409 Conflict. The string is the machine-readable error code.
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    /// 422 Unprocessable Entity. Request passed parsing but failed validation.
     #[error("Validation error: {0}")]
     Validation(String),
 
+    /// 500 Internal Server Error. Generic fallback for unexpected failures.
     #[error("Internal error: {0}")]
     Internal(String),
 
+    /// 500 Internal Server Error caused by a database failure.
     #[error("Database error: {0}")]
     Database(#[from] sea_orm::DbErr),
 
+    /// 500 Internal Server Error caused by a repository-layer failure.
     #[error("Repository error: {0}")]
     Repo(#[from] repo::RepoError),
 }
