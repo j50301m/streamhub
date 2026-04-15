@@ -10,4 +10,5 @@ anyhow = { workspace = true }
 deadpool-redis = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = "0.1"
+tokio-util = { workspace = true }
 tracing = { workspace = true }

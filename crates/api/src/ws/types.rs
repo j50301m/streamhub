@@ -1,6 +1,23 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// A chat message delivered to clients.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessagePayload {
+    /// Redis Stream entry id (millisecond timestamp + sequence).
+    pub id: String,
+    /// Stream (chat room) this message belongs to.
+    pub stream_id: Uuid,
+    /// Sender user UUID.
+    pub user_id: Uuid,
+    /// Sender display name (email local-part fallback).
+    pub display_name: String,
+    /// Message body (plain text — client must HTML-escape before rendering).
+    pub content: String,
+    /// Timestamp (unix millis) parsed from the entry id.
+    pub ts_ms: i64,
+}
+
 /// Server → Client messages sent over WebSocket.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -26,6 +43,43 @@ pub enum ServerMessage {
         /// Streams affected by the reconnect.
         stream_ids: Vec<Uuid>,
     },
+    /// Recent chat messages pushed immediately after `subscribe_chat`.
+    ChatHistory {
+        /// Target stream.
+        stream_id: Uuid,
+        /// Messages ordered oldest → newest.
+        messages: Vec<ChatMessagePayload>,
+    },
+    /// Real-time chat message.
+    ChatMessage {
+        /// Target stream (chat room).
+        stream_id: Uuid,
+        /// Delivered message.
+        message: ChatMessagePayload,
+    },
+    /// Chat-level error (rate limit, length, unauthorized, unknown stream).
+    ChatError {
+        /// Optional stream context if available.
+        stream_id: Option<Uuid>,
+        /// Machine-readable reason.
+        reason: ChatErrorReason,
+    },
+}
+
+/// Reasons a `send_chat` may be rejected by the server.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ChatErrorReason {
+    /// Sent more than 1 msg/sec per user.
+    RateLimited,
+    /// Content exceeds 500 chars or is empty after trimming.
+    TooLong,
+    /// WebSocket is not authenticated (no JWT provided on connect).
+    Unauthorized,
+    /// The `stream_id` is not a currently active stream.
+    UnknownStream,
+    /// Internal error (Redis unavailable, serialization failure, etc.).
+    Unknown,
 }
 
 /// Compact live-stream record pushed to WS clients.
@@ -71,6 +125,23 @@ pub enum ClientMessage {
     Unsubscribe {
         /// Stream to unsubscribe from.
         stream_id: Uuid,
+    },
+    /// Join a chat room and receive recent history + live messages.
+    SubscribeChat {
+        /// Chat room (stream) to join.
+        stream_id: Uuid,
+    },
+    /// Leave a chat room.
+    UnsubscribeChat {
+        /// Chat room (stream) to leave.
+        stream_id: Uuid,
+    },
+    /// Send a chat message. Requires the WebSocket to be authenticated.
+    SendChat {
+        /// Target chat room.
+        stream_id: Uuid,
+        /// Message content (max 500 chars, trimmed, non-empty).
+        content: String,
     },
 }
 

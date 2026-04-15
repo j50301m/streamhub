@@ -40,6 +40,21 @@
         .card-thumb { width: 100%; aspect-ratio: 16/9; border-radius: 4px; margin-bottom: 8px; object-fit: cover; background: #222; }
         .card-thumb-placeholder { width: 100%; aspect-ratio: 16/9; border-radius: 4px; margin-bottom: 8px; background: #222; display: flex; align-items: center; justify-content: center; }
         .card-thumb-placeholder svg { width: 32px; height: 32px; opacity: 0.4; }
+        /* Chat panel */
+        .chat-section { margin-top: 20px; background: #16213e; border-radius: 8px; padding: 12px; }
+        .chat-section h2 { font-size: 16px; margin-bottom: 8px; color: #e94560; }
+        .chat-auth { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+        .chat-auth input { padding: 6px 8px; font-size: 13px; }
+        .chat-messages { height: 260px; overflow-y: auto; background: #0f1830; border: 1px solid #222; border-radius: 4px; padding: 8px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+        .chat-msg { line-height: 1.4; word-break: break-word; }
+        .chat-msg .cm-name { color: #4ecdc4; font-weight: bold; margin-right: 6px; }
+        .chat-msg .cm-body { color: #eee; }
+        .chat-compose { display: flex; gap: 6px; margin-top: 8px; }
+        .chat-compose input { flex: 1; }
+        .chat-compose button { padding: 6px 12px; }
+        .chat-status { font-size: 12px; color: #aaa; margin-top: 4px; min-height: 16px; }
+        .chat-status.err { color: #e94560; }
+        .chat-empty { color: #666; text-align: center; padding: 20px 0; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
@@ -76,6 +91,24 @@
 
         <video id="player" autoplay playsinline controls></video>
         <div class="mode-info" id="mode-info"></div>
+
+        <div class="chat-section" id="chat-section" style="display:none;">
+            <h2>Chat</h2>
+            <div class="chat-auth" id="chat-auth">
+                <input type="email" id="chat-email" placeholder="email" autocomplete="username" />
+                <input type="password" id="chat-password" placeholder="password" autocomplete="current-password" />
+                <button class="primary" onclick="chatLogin()">Login</button>
+                <span id="chat-user-info" style="display:none; align-self:center;"></span>
+            </div>
+            <div class="chat-messages" id="chat-messages">
+                <div class="chat-empty">No messages yet.</div>
+            </div>
+            <div class="chat-compose">
+                <input type="text" id="chat-input" maxlength="500" placeholder="Login to send a message" disabled onkeydown="if(event.key==='Enter'){sendChat();}" />
+                <button class="primary" id="chat-send-btn" onclick="sendChat()" disabled>Send</button>
+            </div>
+            <div class="chat-status" id="chat-status"></div>
+        </div>
 
         <div class="status" id="log">Ready. Enter a stream key and choose WHEP (low latency) or HLS (compatibility).</div>
     </div>
@@ -275,14 +308,68 @@
             });
         }
 
+        // --- Auth (for chat) ---
+        let accessToken = null;
+        let currentChatUser = null;
+        let currentChatRoomId = null; // stream_id of the chat room we're in
+
+        function chatSetStatus(msg, isError) {
+            var el = document.getElementById('chat-status');
+            el.textContent = msg || '';
+            el.className = isError ? 'chat-status err' : 'chat-status';
+        }
+
+        async function chatLogin() {
+            var email = document.getElementById('chat-email').value.trim();
+            var pwd = document.getElementById('chat-password').value;
+            if (!email || !pwd) { chatSetStatus('Enter email + password', true); return; }
+            try {
+                var res = await fetch(document.getElementById('api-url').value + '/v1/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: email, password: pwd })
+                });
+                var json = await res.json();
+                if (!res.ok) { chatSetStatus('Login failed: ' + (json.error && json.error.message || res.status), true); return; }
+                accessToken = json.data.access_token;
+                currentChatUser = json.data.user;
+                document.getElementById('chat-auth').querySelectorAll('input,button').forEach(function(el){ el.style.display = 'none'; });
+                var info = document.getElementById('chat-user-info');
+                info.style.display = '';
+                info.textContent = 'Logged in as ' + currentChatUser.email;
+                document.getElementById('chat-input').disabled = false;
+                document.getElementById('chat-input').placeholder = 'Type a message (max 500)';
+                document.getElementById('chat-send-btn').disabled = false;
+                chatSetStatus('Reconnecting chat as ' + currentChatUser.email + '...');
+                // Reconnect WS so server sees the access token.
+                reconnectWsForAuth();
+            } catch (e) {
+                chatSetStatus('Login error: ' + e.message, true);
+            }
+        }
+
+        function reconnectWsForAuth() {
+            if (ws) {
+                try { ws.close(); } catch (_) {}
+                ws = null;
+            }
+            connectWs();
+        }
+
         // --- WebSocket ---
         function wsUrl() {
             var loc = window.location;
+            var base;
             if (loc.protocol === 'http:' || loc.protocol === 'https:') {
                 var proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-                return proto + '//' + loc.host + '/ws';
+                base = proto + '//' + loc.host + '/ws';
+            } else {
+                base = 'ws://localhost:3000/ws';
             }
-            return 'ws://localhost:3000/ws';
+            if (accessToken) {
+                base += (base.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(accessToken);
+            }
+            return base;
         }
 
         function connectWs() {
@@ -295,6 +382,10 @@
                 // Subscribe to currently watching stream if any
                 if (currentWatchingStreamId) {
                     ws.send(JSON.stringify({ action: 'subscribe', stream_id: currentWatchingStreamId }));
+                }
+                // Re-subscribe to current chat room if any
+                if (currentChatRoomId) {
+                    ws.send(JSON.stringify({ action: 'subscribe_chat', stream_id: currentChatRoomId }));
                 }
             };
             ws.onmessage = function(e) {
@@ -309,6 +400,15 @@
                             break;
                         case 'reconnect':
                             handleReconnect(msg);
+                            break;
+                        case 'chat_history':
+                            chatRenderHistory(msg.messages || []);
+                            break;
+                        case 'chat_message':
+                            chatAppendMessage(msg.message);
+                            break;
+                        case 'chat_error':
+                            chatHandleError(msg.reason);
                             break;
                     }
                 } catch (err) {
@@ -353,6 +453,88 @@
             }
         }
 
+        // --- Chat ---
+        function chatSubscribeRoom(streamId) {
+            if (currentChatRoomId && currentChatRoomId !== streamId) {
+                chatUnsubscribeRoom(currentChatRoomId);
+            }
+            currentChatRoomId = streamId;
+            // Clear previous messages.
+            document.getElementById('chat-messages').innerHTML = '<div class="chat-empty">Loading history...</div>';
+            document.getElementById('chat-section').style.display = '';
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: 'subscribe_chat', stream_id: streamId }));
+            }
+        }
+
+        function chatUnsubscribeRoom(streamId) {
+            if (!streamId) return;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: 'unsubscribe_chat', stream_id: streamId }));
+            }
+            if (currentChatRoomId === streamId) {
+                currentChatRoomId = null;
+            }
+        }
+
+        function chatRenderHistory(messages) {
+            var box = document.getElementById('chat-messages');
+            box.innerHTML = '';
+            if (!messages.length) {
+                box.innerHTML = '<div class="chat-empty">No messages yet.</div>';
+                return;
+            }
+            messages.forEach(function(m) { chatAppendMessage(m, true); });
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function chatAppendMessage(m, suppressScroll) {
+            if (!m) return;
+            if (currentChatRoomId && m.stream_id && m.stream_id !== currentChatRoomId) return;
+            var box = document.getElementById('chat-messages');
+            var empty = box.querySelector('.chat-empty');
+            if (empty) empty.remove();
+            var row = document.createElement('div');
+            row.className = 'chat-msg';
+            var nameSpan = document.createElement('span');
+            nameSpan.className = 'cm-name';
+            nameSpan.textContent = (m.display_name || 'anon') + ':';
+            var bodySpan = document.createElement('span');
+            bodySpan.className = 'cm-body';
+            bodySpan.textContent = m.content || '';
+            row.appendChild(nameSpan);
+            row.appendChild(bodySpan);
+            box.appendChild(row);
+            if (!suppressScroll) box.scrollTop = box.scrollHeight;
+        }
+
+        function chatHandleError(reason) {
+            var msg;
+            switch (reason) {
+                case 'RATE_LIMITED': msg = 'Slow down — 1 message per second.'; break;
+                case 'TOO_LONG': msg = 'Message too long or empty.'; break;
+                case 'UNAUTHORIZED': msg = 'Please log in to send messages.'; break;
+                case 'UNKNOWN_STREAM': msg = 'Stream is not live.'; break;
+                default: msg = 'Chat error: ' + reason;
+            }
+            chatSetStatus(msg, true);
+            setTimeout(function() {
+                var el = document.getElementById('chat-status');
+                if (el.textContent === msg) chatSetStatus('');
+            }, 3000);
+        }
+
+        function sendChat() {
+            var input = document.getElementById('chat-input');
+            var content = input.value;
+            if (!content.trim()) return;
+            if (!currentChatRoomId) { chatSetStatus('Start watching a stream first.', true); return; }
+            if (!accessToken) { chatSetStatus('Please log in first.', true); return; }
+            if (!ws || ws.readyState !== WebSocket.OPEN) { chatSetStatus('Disconnected.', true); return; }
+            ws.send(JSON.stringify({ action: 'send_chat', stream_id: currentChatRoomId, content: content }));
+            input.value = '';
+        }
+
         // Initial fetch: VOD via REST (not pushed by WS), live streams come from WS
         fetchVodStreams();
         // Refresh VOD list periodically (VODs don't change often)
@@ -373,6 +555,10 @@
             if (currentWatchingStreamId) {
                 wsUnsubscribe(currentWatchingStreamId);
             }
+            if (currentChatRoomId) {
+                chatUnsubscribeRoom(currentChatRoomId);
+            }
+            document.getElementById('chat-section').style.display = 'none';
             if (pc) { pc.close(); pc = null; }
             if (hls) { hls.destroy(); hls = null; }
             const video = document.getElementById('player');
@@ -402,6 +588,7 @@
             // Subscribe to viewer count for this stream
             if (currentStreamData && currentStreamData.id) {
                 wsSubscribe(currentStreamData.id);
+                chatSubscribeRoom(currentStreamData.id);
             }
 
             try {
@@ -478,6 +665,7 @@
             // Subscribe to viewer count for this stream
             if (currentStreamData && currentStreamData.id) {
                 wsSubscribe(currentStreamData.id);
+                chatSubscribeRoom(currentStreamData.id);
             }
 
             const video = document.getElementById('player');
