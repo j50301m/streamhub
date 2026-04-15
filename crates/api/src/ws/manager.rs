@@ -9,6 +9,7 @@ use crate::ws::types::{LiveStreamData, ServerMessage};
 
 /// A single WebSocket connection.
 pub struct WsConnection {
+    /// Outbound queue feeding this connection's send half.
     pub tx: mpsc::UnboundedSender<Message>,
 }
 
@@ -26,6 +27,7 @@ pub struct WsManager {
 }
 
 impl WsManager {
+    /// Create a new manager wrapped in `Arc` for shared access across tasks.
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             connections: RwLock::new(HashMap::new()),

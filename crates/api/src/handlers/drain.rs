@@ -6,14 +6,20 @@ use serde::Deserialize;
 
 use crate::ws::types::RedisEvent;
 
+/// Query string for `POST /internal/mtx/drain`.
 #[derive(Debug, Deserialize)]
 pub struct DrainQuery {
-    /// MediaMTX instance name to drain (e.g. "mtx-2")
+    /// MediaMTX instance name to drain (e.g. `"mtx-2"`).
     pub mtx: String,
 }
 
-/// POST /internal/mtx/drain?mtx=mtx-2
-/// Marks an MTX instance as draining and notifies affected clients to reconnect.
+/// `POST /internal/mtx/drain?mtx=<name>` — mark an MTX instance as draining and
+/// tell affected clients to reconnect so they migrate to a healthy instance.
+///
+/// Internal; not exposed outside the cluster.
+///
+/// # Errors
+/// - 500 on Redis, DB, or pubsub failure
 #[tracing::instrument(skip(state), fields(mtx = %query.mtx))]
 pub(crate) async fn drain_handler(
     State(state): State<AppState>,

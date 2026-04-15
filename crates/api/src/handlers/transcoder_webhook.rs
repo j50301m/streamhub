@@ -8,14 +8,19 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Envelope for a GCP Pub/Sub push notification.
 #[derive(Debug, Deserialize)]
 pub struct PubSubPush {
+    /// The inner Pub/Sub message.
     pub message: PubSubMessage,
 }
 
+/// Inner Pub/Sub message body.
 #[derive(Debug, Deserialize)]
 pub struct PubSubMessage {
-    pub data: String, // base64 encoded
+    /// Base64-encoded message payload.
+    pub data: String,
+    /// Optional user-defined attributes (unused here).
     #[allow(dead_code)]
     pub attributes: Option<serde_json::Value>,
 }
@@ -35,10 +40,18 @@ struct TranscoderJob {
     labels: HashMap<String, String>,
 }
 
-/// POST /internal/hooks/transcoder-complete
+/// `POST /internal/hooks/transcoder-complete` — GCP Pub/Sub push receiver.
 ///
-/// Receives Pub/Sub push notifications for GCP Transcoder API job state changes.
-/// Updates the stream's vod_status based on the job result.
+/// Decodes the Transcoder job-state-change payload and, on `SUCCEEDED` /
+/// `FAILED`, updates `streams.vod_status`. Intermediate states are ignored.
+/// Always returns 200 on decode failures so Pub/Sub stops retrying (errors
+/// are logged).
+///
+/// Internal; not exposed outside the cluster.
+///
+/// # Errors
+/// - 400 on base64 / JSON decode failure or missing `stream_id` label
+/// - 500 on DB failure
 #[tracing::instrument(skip(state, payload))]
 pub(crate) async fn transcoder_webhook(
     State(state): State<AppState>,

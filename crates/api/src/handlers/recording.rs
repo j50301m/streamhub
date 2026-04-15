@@ -9,9 +9,12 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// JSON body sent by MediaMTX for `runOnRecordSegmentComplete`.
 #[derive(Debug, Deserialize)]
 pub struct RecordingHookPayload {
+    /// MediaMTX path (equals stream key).
     pub stream_key: String,
+    /// Container-internal path of the completed segment.
     pub segment_path: String,
 }
 
@@ -24,9 +27,16 @@ fn map_to_local_path(segment_path: &str, recordings_path: &str) -> PathBuf {
     Path::new(recordings_path).join(relative)
 }
 
-/// POST /internal/hooks/recording
-/// Called by MediaMTX when a recording segment is complete.
-/// Only saves the recording metadata to DB. Transcoding is triggered by unpublish hook.
+/// `POST /internal/hooks/recording` — MediaMTX segment-complete webhook.
+///
+/// Records one segment's metadata (path + size) to the DB. Transcoding is
+/// triggered separately by the unpublish webhook once the stream ends.
+///
+/// Internal; not exposed outside the cluster.
+///
+/// # Errors
+/// - 404 if the stream key is unknown
+/// - 500 on DB failure
 #[tracing::instrument(skip(state, payload), fields(stream_key = %payload.stream_key, segment_path = %payload.segment_path))]
 pub(crate) async fn recording_hook(
     State(state): State<AppState>,

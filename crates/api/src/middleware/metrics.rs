@@ -4,6 +4,8 @@ use axum::response::Response;
 use metrics::{counter, histogram};
 use std::time::Instant;
 
+/// Records `http_requests_total` (counter) and `http_request_duration_seconds`
+/// (histogram) for every request, labelled by method / path / status.
 pub async fn track_metrics(req: Request, next: Next) -> Response {
     let method = req.method().to_string();
     let path = req.uri().path().to_string();

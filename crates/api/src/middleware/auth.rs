@@ -4,11 +4,18 @@ use common::{AppError, AppState};
 use entity::user;
 use uuid::Uuid;
 
-/// Authenticated user extracted from Bearer token.
+/// Authenticated user resolved from a Bearer JWT access token.
+///
+/// Use as a handler parameter to require authentication; extraction fails with
+/// `AppError::Unauthorized` when the token is missing, malformed, expired, or
+/// the user no longer exists.
 #[derive(Debug, Clone)]
 pub struct CurrentUser {
+    /// User UUID.
     pub id: Uuid,
+    /// User email (lowercase).
     pub email: String,
+    /// Role controlling authorization (broadcaster / viewer / admin).
     pub role: user::UserRole,
 }
 

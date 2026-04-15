@@ -5,22 +5,42 @@ use common::AppState;
 use entity::stream;
 use serde::Deserialize;
 
+/// Request body sent by MediaMTX to the HTTP auth callback.
+///
+/// See MediaMTX docs for field semantics; most fields are optional because
+/// their presence depends on the triggering protocol.
 #[derive(Debug, Deserialize)]
 pub struct MediaMtxAuthRequest {
+    /// Client IP.
     pub ip: Option<String>,
+    /// Basic-auth user (unused — we authenticate via query token).
     pub user: Option<String>,
+    /// Basic-auth password (unused).
     pub password: Option<String>,
+    /// MediaMTX path (equals the stream key in our setup).
     pub path: String,
+    /// Protocol name (`webrtc`, `hls`, ...).
     pub protocol: Option<String>,
+    /// MediaMTX session id.
     pub id: Option<String>,
+    /// Action being authorized (`publish` / `read` / `playback` / `api`).
     pub action: String,
+    /// Full query string from the client, if any; contains the publish token.
     pub query: Option<String>,
 }
 
-/// POST /internal/auth
-/// MediaMTX HTTP auth callback.
-/// - action=publish -> validate stream token from query param
-/// - action=read -> check stream exists and is Live
+/// `POST /internal/auth` — MediaMTX HTTP auth callback.
+///
+/// Returns 200 to allow, 401/404/500 to deny. `publish` validates a token
+/// from the query string against Redis; `read` checks the stream is `Live`;
+/// other actions are allowed by default.
+///
+/// Internal; not exposed outside the cluster.
+///
+/// # Errors
+/// - 401 on missing / invalid / mismatched publish token
+/// - 404 if the path does not map to a known stream (or not live for read)
+/// - 500 on Redis or DB failure
 #[tracing::instrument(skip(state, payload), fields(path = %payload.path, action = %payload.action))]
 pub(crate) async fn mediamtx_auth(
     State(state): State<AppState>,

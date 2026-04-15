@@ -11,13 +11,25 @@ use crate::middleware::CurrentUser;
 
 use super::streams::DataResponse;
 
+/// Response for `POST /v1/streams/:id/thumbnail`.
 #[derive(Debug, Serialize)]
 pub struct ThumbnailResponse {
+    /// Public URL of the uploaded thumbnail.
     pub thumbnail_url: String,
 }
 
-/// POST /v1/streams/:id/thumbnail
-/// Accepts raw JPEG binary body. Owner only, stream must be Live or VodReady.
+/// `POST /v1/streams/:id/thumbnail` — upload a JPEG poster for the stream.
+///
+/// Body is the raw JPEG bytes (no multipart). Stored as
+/// `streams/{key}/live-thumb.jpg` in the object store and written back to
+/// `streams.thumbnail_url`. Body is capped at 2 MiB at the router layer.
+///
+/// # Errors
+/// - 401 if unauthenticated
+/// - 403 if the caller is not the stream owner
+/// - 404 `STREAM_NOT_FOUND`
+/// - 409 `STREAM_NOT_LIVE_OR_VOD_READY` outside those two states
+/// - 500 on filesystem / storage / DB failure
 #[tracing::instrument(skip(state, body), fields(stream_id = %id, user_id = %current_user.id))]
 pub(crate) async fn upload_thumbnail(
     current_user: CurrentUser,
