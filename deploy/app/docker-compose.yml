@@ -10,6 +10,12 @@ services:
     volumes:
       - recordings:/recordings
       - thumbnails:/thumbnails
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   recordings:

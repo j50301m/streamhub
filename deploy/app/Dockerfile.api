@@ -7,6 +7,6 @@ RUN cargo build --release -p api
 
 # Stage 2: Runtime
 FROM debian:trixie-slim
-RUN apt-get update && apt-get install -y ca-certificates libssl3 ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libssl3 ffmpeg curl && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/api /usr/local/bin/api
 ENTRYPOINT ["api"]
