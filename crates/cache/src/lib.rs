@@ -95,6 +95,10 @@ pub trait CacheStore: Send + Sync {
 
     /// TTL — remaining seconds for `key`. Returns `-2` if missing, `-1` if no expiry, otherwise > 0.
     async fn ttl(&self, key: &str) -> Result<i64, anyhow::Error>;
+
+    /// XLEN — returns the number of entries in the Redis Stream at `key`.
+    /// Returns 0 if the key does not exist.
+    async fn xlen(&self, key: &str) -> Result<u64, anyhow::Error>;
 }
 
 /// In-memory [`CacheStore`] backed by a `HashMap` with real TTL enforcement.
@@ -300,6 +304,11 @@ impl CacheStore for InMemoryCache {
             },
         }
     }
+
+    async fn xlen(&self, key: &str) -> Result<u64, anyhow::Error> {
+        let streams = self.streams.lock().await;
+        Ok(streams.get(key).map(|buf| buf.len() as u64).unwrap_or(0))
+    }
 }
 
 /// Redis-backed [`CacheStore`] using a `deadpool-redis` connection pool.
@@ -464,6 +473,15 @@ impl CacheStore for RedisCacheStore {
             .query_async(&mut *conn)
             .await?;
         Ok(ttl)
+    }
+
+    async fn xlen(&self, key: &str) -> Result<u64, anyhow::Error> {
+        let mut conn = self.pool.get().await?;
+        let len: u64 = deadpool_redis::redis::cmd("XLEN")
+            .arg(key)
+            .query_async(&mut *conn)
+            .await?;
+        Ok(len)
     }
 }
 

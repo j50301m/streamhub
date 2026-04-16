@@ -100,6 +100,26 @@ impl<C: ConnectionTrait> StreamRepoRef<'_, C> {
     pub async fn list_live_limited(&self, limit: u64) -> Result<Vec<stream::Model>, RepoError> {
         crate::stream::list_live_limited(self.0, limit).await
     }
+
+    /// Lists all streams with optional status filter and text search,
+    /// paginated 1-indexed by `page` with `per_page` rows per page.
+    pub async fn find_streams_paginated(
+        &self,
+        page: u64,
+        per_page: u64,
+        status: Option<stream::StreamStatus>,
+        q: Option<&str>,
+    ) -> Result<crate::stream::PaginatedResult, RepoError> {
+        crate::stream::find_streams_paginated(self.0, page, per_page, status, q).await
+    }
+
+    /// Returns streams that are currently live or ended within the last 24 hours.
+    pub async fn find_recent_streams(
+        &self,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<stream::Model>, RepoError> {
+        crate::stream::find_recent_streams(self.0, since).await
+    }
 }
 
 impl<C: ConnectionTrait> UserRepoRef<'_, C> {

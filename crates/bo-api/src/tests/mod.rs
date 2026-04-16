@@ -1,4 +1,5 @@
 mod admin_test;
+mod streams_test;
 mod users_test;
 
 use axum::body::Body;

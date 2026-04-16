@@ -28,4 +28,21 @@ pub fn app_router() -> Router<BoAppState> {
             "/v1/admin/users/{id}/suspend",
             delete(handlers::users::unsuspend),
         )
+        .route("/v1/admin/streams", get(handlers::streams::list_streams))
+        .route(
+            "/v1/admin/streams/{id}",
+            get(handlers::streams::stream_detail),
+        )
+        .route(
+            "/v1/admin/streams/{id}/end",
+            post(handlers::streams::force_end),
+        )
+        .route(
+            "/v1/admin/moderation/bans",
+            get(handlers::moderation::list_bans),
+        )
+        .route(
+            "/v1/admin/moderation/streams/{id}/chat",
+            get(handlers::moderation::stream_chat),
+        )
 }
