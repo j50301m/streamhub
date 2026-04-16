@@ -57,6 +57,13 @@ pub enum ServerMessage {
         /// Delivered message.
         message: ChatMessagePayload,
     },
+    /// A chat message was deleted by a moderator / admin.
+    ChatMessageDeleted {
+        /// Stream whose chat room this deletion applies to.
+        stream_id: Uuid,
+        /// UUID v7 message id that was deleted.
+        msg_id: String,
+    },
     /// Chat-level error (rate limit, length, unauthorized, unknown stream).
     ChatError {
         /// Optional stream context if available.
@@ -78,6 +85,8 @@ pub enum ChatErrorReason {
     Unauthorized,
     /// The `stream_id` is not a currently active stream.
     UnknownStream,
+    /// The user is banned from this chat room.
+    Banned,
     /// Internal error (Redis unavailable, serialization failure, etc.).
     Unknown,
 }

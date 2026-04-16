@@ -43,15 +43,32 @@
         .status-ended { background: #4ecdc4; color: #1a1a2e; }
         /* Chat panel */
         .chat-messages { height: 240px; overflow-y: auto; background: #0f1830; border: 1px solid #222; border-radius: 4px; padding: 8px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
-        .chat-msg { line-height: 1.4; word-break: break-word; }
+        .chat-msg { line-height: 1.4; word-break: break-word; position: relative; padding-right: 24px; }
         .chat-msg .cm-name { color: #4ecdc4; font-weight: bold; margin-right: 6px; }
         .chat-msg .cm-body { color: #eee; }
+        .chat-msg .cm-actions { display: none; position: absolute; right: 0; top: 0; gap: 4px; }
+        .chat-msg:hover .cm-actions { display: flex; }
+        .cm-actions button { background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; color: #e94560; }
+        .cm-actions button:hover { text-decoration: underline; }
+        .ban-menu { position: absolute; right: 0; top: 16px; background: #1a2a4e; border: 1px solid #444; border-radius: 4px; padding: 4px; z-index: 10; display: flex; flex-direction: column; gap: 2px; }
+        .ban-menu button { font-size: 11px; background: #e94560; color: #fff; border: none; border-radius: 3px; padding: 3px 8px; cursor: pointer; white-space: nowrap; }
+        .ban-menu button:hover { background: #c73e54; }
         .chat-compose { display: flex; gap: 6px; margin-top: 8px; }
         .chat-compose input { flex: 1; }
         .chat-compose button { padding: 6px 12px; }
         .chat-status { font-size: 12px; color: #aaa; margin-top: 4px; min-height: 16px; }
         .chat-status.err { color: #e94560; }
         .chat-empty { color: #666; text-align: center; padding: 20px 0; }
+        .chat-toast { position: fixed; top: 20px; right: 20px; background: #e94560; color: #fff; padding: 10px 16px; border-radius: 6px; font-size: 13px; z-index: 100; display: none; }
+        .bans-section { margin-top: 8px; }
+        .bans-toggle { background: none; border: 1px solid #444; color: #aaa; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .bans-toggle:hover { border-color: #e94560; color: #eee; }
+        .bans-list { margin-top: 6px; font-size: 12px; }
+        .ban-entry { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #222; }
+        .ban-entry .ban-info { color: #ccc; }
+        .ban-entry .ban-ttl { color: #aaa; margin-left: 8px; }
+        .ban-entry button { font-size: 11px; background: #0f3460; color: #fff; border: none; border-radius: 3px; padding: 2px 8px; cursor: pointer; }
+        .ban-entry button:hover { background: #1a4a7a; }
     </style>
 </head>
 <body>
@@ -125,7 +142,12 @@
                 <button class="primary" id="chat-send-btn" onclick="sendChat()" disabled>Send</button>
             </div>
             <div class="chat-status" id="chat-status"></div>
+            <div class="bans-section" id="bans-section" style="display:none;">
+                <button class="bans-toggle" onclick="toggleBansList()">Banned Users</button>
+                <div class="bans-list" id="bans-list" style="display:none;"></div>
+            </div>
         </div>
+        <div class="chat-toast" id="chat-toast"></div>
 
         <!-- My Streams Section -->
         <div class="section disabled" id="my-streams-section">
@@ -558,6 +580,9 @@
                         case 'chat_message':
                             chatAppendMessage(msg.message);
                             break;
+                        case 'chat_message_deleted':
+                            chatRemoveMessage(msg.msg_id);
+                            break;
                         case 'chat_error':
                             chatHandleError(msg.reason);
                             break;
@@ -613,6 +638,10 @@
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ action: 'subscribe_chat', stream_id: streamId }));
             }
+            if (canModerate()) {
+                document.getElementById('bans-section').style.display = '';
+                fetchBansList();
+            }
         }
 
         function chatUnsubscribeRoom(streamId) {
@@ -642,6 +671,8 @@
             if (empty) empty.remove();
             var row = document.createElement('div');
             row.className = 'chat-msg';
+            if (m.id) row.setAttribute('data-msg-id', m.id);
+            if (m.user_id) row.setAttribute('data-user-id', m.user_id);
             var nameSpan = document.createElement('span');
             nameSpan.className = 'cm-name';
             nameSpan.textContent = (m.display_name || 'anon') + ':';
@@ -650,6 +681,22 @@
             bodySpan.textContent = m.content || '';
             row.appendChild(nameSpan);
             row.appendChild(bodySpan);
+            if (canModerate() && m.id) {
+                var actions = document.createElement('span');
+                actions.className = 'cm-actions';
+                var delBtn = document.createElement('button');
+                delBtn.textContent = 'X';
+                delBtn.title = 'Delete message';
+                delBtn.onclick = function() { chatDeleteMessage(m.id); };
+                actions.appendChild(delBtn);
+                if (m.user_id && currentUser && m.user_id !== currentUser.id) {
+                    var banBtn = document.createElement('button');
+                    banBtn.textContent = 'Ban';
+                    banBtn.onclick = function(e) { showBanMenu(e, m.user_id, m.display_name); };
+                    actions.appendChild(banBtn);
+                }
+                row.appendChild(actions);
+            }
             box.appendChild(row);
             if (!suppressScroll) box.scrollTop = box.scrollHeight;
         }
@@ -661,6 +708,7 @@
                 case 'TOO_LONG': msg = 'Message too long or empty.'; break;
                 case 'UNAUTHORIZED': msg = 'Please log in to send messages.'; break;
                 case 'UNKNOWN_STREAM': msg = 'Stream is not live.'; break;
+                case 'BANNED': msg = 'You are banned from this chat.'; showToast(msg); break;
                 default: msg = 'Chat error: ' + reason;
             }
             chatSetStatus(msg, true);
@@ -668,6 +716,143 @@
                 var el = document.getElementById('chat-status');
                 if (el.textContent === msg) chatSetStatus('');
             }, 3000);
+        }
+
+        function canModerate() {
+            if (!currentUser) return false;
+            if (currentUser.role === 'admin') return true;
+            if (currentStreamId && currentChatRoomId === currentStreamId) return true;
+            return false;
+        }
+
+        function showToast(msg) {
+            var el = document.getElementById('chat-toast');
+            el.textContent = msg;
+            el.style.display = 'block';
+            setTimeout(function() { el.style.display = 'none'; }, 4000);
+        }
+
+        function chatRemoveMessage(msgId) {
+            var el = document.querySelector('.chat-msg[data-msg-id="' + msgId + '"]');
+            if (el) el.remove();
+        }
+
+        function chatDeleteMessage(msgId) {
+            if (!currentChatRoomId) return;
+            fetch(apiUrl() + '/v1/streams/' + currentChatRoomId + '/chat/messages/' + msgId, {
+                method: 'DELETE', headers: authHeaders()
+            }).then(function(res) {
+                if (!res.ok) chatSetStatus('Delete failed: ' + res.status, true);
+            });
+        }
+
+        var activeBanMenu = null;
+        function showBanMenu(e, userId, displayName) {
+            closeBanMenu();
+            var menu = document.createElement('div');
+            menu.className = 'ban-menu';
+            var opts = [{label:'10 min', secs:600},{label:'1 hour', secs:3600},{label:'1 day', secs:86400},{label:'Permanent', secs:null}];
+            opts.forEach(function(opt) {
+                var btn = document.createElement('button');
+                btn.textContent = opt.label;
+                btn.onclick = function() { doBan(userId, opt.secs); closeBanMenu(); };
+                menu.appendChild(btn);
+            });
+            e.target.closest('.chat-msg').appendChild(menu);
+            activeBanMenu = menu;
+            setTimeout(function() {
+                document.addEventListener('click', closeBanMenuOnOutside, {once:true});
+            }, 0);
+        }
+        function closeBanMenu() { if (activeBanMenu) { activeBanMenu.remove(); activeBanMenu = null; } }
+        function closeBanMenuOnOutside(e) { if (activeBanMenu && !activeBanMenu.contains(e.target)) closeBanMenu(); }
+
+        function doBan(userId, durationSecs) {
+            if (!currentChatRoomId) return;
+            fetch(apiUrl() + '/v1/streams/' + currentChatRoomId + '/chat/bans', {
+                method: 'POST', headers: authHeaders(),
+                body: JSON.stringify({ user_id: userId, duration_secs: durationSecs })
+            }).then(function(res) {
+                if (res.ok) { chatSetStatus('User banned.'); fetchBansList(); }
+                else res.json().then(function(j) { chatSetStatus('Ban failed: ' + (j.error && j.error.message || res.status), true); });
+            });
+        }
+
+        var bansCountdownInterval = null;
+        function toggleBansList() {
+            var el = document.getElementById('bans-list');
+            if (el.style.display === 'none') { el.style.display = ''; fetchBansList(); }
+            else el.style.display = 'none';
+        }
+
+        function fetchBansList() {
+            if (!currentChatRoomId) return;
+            fetch(apiUrl() + '/v1/streams/' + currentChatRoomId + '/chat/bans', { headers: authHeaders() })
+            .then(function(res) { return res.json(); })
+            .then(function(json) { renderBansList(json.data || []); });
+        }
+
+        function renderBansList(bans) {
+            var el = document.getElementById('bans-list');
+            if (bansCountdownInterval) { clearInterval(bansCountdownInterval); bansCountdownInterval = null; }
+            if (!bans.length) { el.innerHTML = '<div style="color:#666;padding:4px 0;">No bans</div>'; return; }
+            el.innerHTML = '';
+            bans.forEach(function(b) {
+                var row = document.createElement('div');
+                row.className = 'ban-entry';
+                row.setAttribute('data-ban-user', b.user_id);
+                var info = document.createElement('span');
+                info.className = 'ban-info';
+                info.textContent = b.display_name || b.user_id.slice(0,8);
+                var ttl = document.createElement('span');
+                ttl.className = 'ban-ttl';
+                if (b.expires_at) {
+                    var remaining = Math.max(0, Math.floor((new Date(b.expires_at).getTime() - Date.now()) / 1000));
+                    ttl.setAttribute('data-remaining', remaining);
+                    ttl.textContent = formatCountdown(remaining);
+                } else {
+                    ttl.textContent = 'Permanent';
+                }
+                var btn = document.createElement('button');
+                btn.textContent = 'Unban';
+                btn.onclick = function() { doUnban(b.user_id); };
+                row.appendChild(info);
+                row.appendChild(ttl);
+                row.appendChild(btn);
+                el.appendChild(row);
+            });
+            bansCountdownInterval = setInterval(updateBansCountdown, 1000);
+        }
+
+        function formatCountdown(secs) {
+            if (secs <= 0) return 'Expired';
+            var h = Math.floor(secs / 3600);
+            var m = Math.floor((secs % 3600) / 60);
+            var s = secs % 60;
+            if (h > 0) return h + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+            return m + ':' + String(s).padStart(2,'0');
+        }
+
+        function updateBansCountdown() {
+            document.querySelectorAll('.ban-ttl[data-remaining]').forEach(function(el) {
+                var r = parseInt(el.getAttribute('data-remaining'), 10) - 1;
+                if (r <= 0) { el.closest('.ban-entry').remove(); return; }
+                el.setAttribute('data-remaining', r);
+                el.textContent = formatCountdown(r);
+            });
+        }
+
+        function doUnban(userId) {
+            if (!currentChatRoomId) return;
+            fetch(apiUrl() + '/v1/streams/' + currentChatRoomId + '/chat/bans/' + userId, {
+                method: 'DELETE', headers: authHeaders()
+            }).then(function(res) {
+                if (res.ok) {
+                    var row = document.querySelector('.ban-entry[data-ban-user="' + userId + '"]');
+                    if (row) row.remove();
+                    chatSetStatus('User unbanned.');
+                } else chatSetStatus('Unban failed: ' + res.status, true);
+            });
         }
 
         function sendChat() {
