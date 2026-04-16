@@ -64,14 +64,22 @@ pub fn chat_msgindex(stream_id: &Uuid) -> String {
     format!("chat:{stream_id}:msgindex")
 }
 
-/// Key `chat:ban:{stream_id}:{user_id}` — exists while the user is banned from the stream.
-pub fn chat_ban(stream_id: &Uuid, user_id: &Uuid) -> String {
-    format!("chat:ban:{stream_id}:{user_id}")
+/// Key `chat:ban:{owner_id}:{user_id}` — exists while the user is banned from
+/// the broadcaster's channel. `owner_id` is the broadcaster's user UUID so that
+/// bans persist across streams owned by the same broadcaster.
+pub fn chat_ban(owner_id: &Uuid, user_id: &Uuid) -> String {
+    format!("chat:ban:{owner_id}:{user_id}")
 }
 
-/// Key `chat:bans:{stream_id}` — SET of banned user_ids for the stream.
-pub fn chat_bans_set(stream_id: &Uuid) -> String {
-    format!("chat:bans:{stream_id}")
+/// Key `chat:bans:{owner_id}` — SET of banned user_ids for a broadcaster.
+pub fn chat_bans_set(owner_id: &Uuid) -> String {
+    format!("chat:bans:{owner_id}")
+}
+
+/// Key `stream:{stream_id}:owner` — the broadcaster (user) UUID that owns the
+/// stream. Written at `create_stream_token` time, no TTL.
+pub fn stream_owner(stream_id: &Uuid) -> String {
+    format!("stream:{stream_id}:owner")
 }
 
 /// Key `stream:{stream_id}:viewer_count` — cached viewer count written by the

@@ -548,6 +548,21 @@ pub(crate) async fn create_stream_token(
             AppError::Internal("failed to record stream routing".to_string())
         })?;
 
+    // Cache the stream owner so chat ban checks can resolve stream → broadcaster
+    // without hitting the DB on every message.
+    state
+        .cache
+        .set(
+            &mediamtx::keys::stream_owner(&id),
+            &current_user.id.to_string(),
+            None, // no TTL — lives as long as the stream is relevant
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to cache stream owner");
+            AppError::Internal("failed to cache stream owner".to_string())
+        })?;
+
     // Generate raw token, hash it, and store hash → stream_id in Redis with TTL auto-cleanup.
     let raw_token = auth::token::generate_stream_token();
     let token_hash = auth::token::hash_token(&raw_token);

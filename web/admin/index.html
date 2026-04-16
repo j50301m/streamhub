@@ -255,8 +255,8 @@
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Stream</th>
-                                    <th>User</th>
+                                    <th>Broadcaster</th>
+                                    <th>Banned User</th>
                                     <th>Type</th>
                                     <th>Action</th>
                                 </tr>
@@ -1089,7 +1089,7 @@
                 var tr = document.createElement('tr');
 
                 var tdStream = document.createElement('td');
-                tdStream.textContent = b.stream_title || b.stream_id;
+                tdStream.textContent = b.broadcaster_email || b.broadcaster_id;
                 tr.appendChild(tdStream);
 
                 var tdUser = document.createElement('td');

@@ -38,6 +38,14 @@ async fn load_stream_owner(state: &AppState, stream_id: Uuid) -> Result<Option<U
     Ok(model.user_id)
 }
 
+/// Resolve the broadcaster (owner) UUID for a stream. Returns an error if the
+/// stream has no owner (orphaned legacy row).
+async fn resolve_broadcaster(state: &AppState, stream_id: Uuid) -> Result<Uuid, AppError> {
+    load_stream_owner(state, stream_id).await?.ok_or_else(|| {
+        AppError::Internal("stream has no owner — cannot resolve broadcaster".to_string())
+    })
+}
+
 /// `DELETE /v1/streams/:stream_id/chat/messages/:msg_id`
 #[tracing::instrument(skip(state), fields(%stream_id, %msg_id, user_id = %current_user.id))]
 pub(crate) async fn delete_message_handler(
@@ -126,9 +134,11 @@ pub(crate) async fn ban_user_handler(
         }
     }
 
+    let broadcaster_id = resolve_broadcaster(&state, stream_id).await?;
+
     let cache = state.cache.as_ref();
-    let ban_key = mediamtx::keys::chat_ban(&stream_id, &body.user_id);
-    let bans_set_key = mediamtx::keys::chat_bans_set(&stream_id);
+    let ban_key = mediamtx::keys::chat_ban(&broadcaster_id, &body.user_id);
+    let bans_set_key = mediamtx::keys::chat_bans_set(&broadcaster_id);
 
     cache
         .set(&ban_key, "1", body.duration_secs)
@@ -169,8 +179,10 @@ pub(crate) async fn list_bans_handler(
     let owner = load_stream_owner(&state, stream_id).await?;
     assert_can_moderate(&current_user, owner)?;
 
+    let broadcaster_id = resolve_broadcaster(&state, stream_id).await?;
+
     let cache = state.cache.as_ref();
-    let bans_set_key = mediamtx::keys::chat_bans_set(&stream_id);
+    let bans_set_key = mediamtx::keys::chat_bans_set(&broadcaster_id);
     let members = cache
         .smembers(&bans_set_key)
         .await
@@ -182,7 +194,7 @@ pub(crate) async fn list_bans_handler(
             Ok(u) => u,
             Err(_) => continue,
         };
-        let ban_key = mediamtx::keys::chat_ban(&stream_id, &uid);
+        let ban_key = mediamtx::keys::chat_ban(&broadcaster_id, &uid);
         let ttl = cache
             .ttl(&ban_key)
             .await
@@ -233,9 +245,11 @@ pub(crate) async fn unban_user_handler(
     let owner = load_stream_owner(&state, stream_id).await?;
     assert_can_moderate(&current_user, owner)?;
 
+    let broadcaster_id = resolve_broadcaster(&state, stream_id).await?;
+
     let cache = state.cache.as_ref();
-    let ban_key = mediamtx::keys::chat_ban(&stream_id, &user_id);
-    let bans_set_key = mediamtx::keys::chat_bans_set(&stream_id);
+    let ban_key = mediamtx::keys::chat_ban(&broadcaster_id, &user_id);
+    let bans_set_key = mediamtx::keys::chat_bans_set(&broadcaster_id);
 
     let deleted_key = cache
         .get(&ban_key)
