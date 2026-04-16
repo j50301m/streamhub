@@ -530,6 +530,16 @@ pub(crate) async fn create_stream_token(
         return Err(AppError::Forbidden("not the stream owner".to_string()));
     }
 
+    if state
+        .cache
+        .get(&mediamtx::keys::stream_force_ended(&id))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .is_some()
+    {
+        return Err(AppError::Conflict("STREAM_FORCE_ENDED".to_string()));
+    }
+
     // Select a MediaMTX instance for this stream
     let instance = mediamtx::select_instance(state.cache.as_ref(), &state.mtx_instances)
         .await

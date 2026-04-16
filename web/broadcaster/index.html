@@ -173,6 +173,8 @@
         let ws = null;
         let wsReconnectTimer = null;
         let isStreaming = false;
+        let streamReconnectTimer = null;
+        let streamForceEnded = false;
 
         // Detect environment: if served via nginx (port 3000), use proxy paths
         // Otherwise (direct file open or other port), use direct localhost URLs
@@ -292,6 +294,7 @@
                 const stream = json.data;
                 currentStreamId = stream.id;
                 currentStreamKey = stream.stream_key;
+                streamForceEnded = false;
                 document.getElementById('stream-key').value = currentStreamKey;
                 document.getElementById('stream-info').style.display = 'flex';
                 document.getElementById('btn-create').disabled = true;
@@ -312,7 +315,7 @@
         }
 
         async function startStreaming() {
-            if (!currentStreamId || !localStream) return;
+            if (!currentStreamId || !localStream || streamForceEnded) return;
 
             try {
                 // Get push token from API
@@ -324,7 +327,11 @@
                 const tokenJson = await tokenRes.json();
 
                 if (!tokenRes.ok) {
-                    log('Token error: ' + (tokenJson.error?.message || tokenRes.status));
+                    const reason = tokenJson.error?.message || tokenRes.status;
+                    log('Token error: ' + reason);
+                    if (tokenRes.status === 409 && reason === 'STREAM_FORCE_ENDED') {
+                        handleStreamForceEnded(currentStreamId, reason);
+                    }
                     return;
                 }
 
@@ -364,12 +371,7 @@
 
                 pc.onconnectionstatechange = function() {
                     if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-                        log('WebRTC disconnected, reconnecting in 3s...');
-                        setTimeout(async function() {
-                            if (isStreaming && currentStreamId) {
-                                await startStreaming();
-                            }
-                        }, 3000);
+                        scheduleStreamReconnect('WebRTC disconnected');
                     }
                 };
 
@@ -422,7 +424,42 @@
             }
         }
 
+        function clearStreamReconnectTimer() {
+            if (streamReconnectTimer) {
+                clearTimeout(streamReconnectTimer);
+                streamReconnectTimer = null;
+            }
+        }
+
+        function scheduleStreamReconnect(reason) {
+            if (!currentStreamId || !isStreaming || streamForceEnded) return;
+            clearStreamReconnectTimer();
+            log(reason + ', reconnecting in 3s...');
+            streamReconnectTimer = setTimeout(async function() {
+                streamReconnectTimer = null;
+                if (isStreaming && currentStreamId && !streamForceEnded) {
+                    await startStreaming();
+                }
+            }, 3000);
+        }
+
+        function handleStreamForceEnded(streamId, reason) {
+            if (streamId !== currentStreamId) return;
+            streamForceEnded = true;
+            clearStreamReconnectTimer();
+            log('Stream was force-ended by admin. Stopping reconnect.');
+            isStreaming = false;
+            if (pc) {
+                pc.onconnectionstatechange = null;
+            }
+            stopStreaming();
+            document.getElementById('btn-start').disabled = true;
+            document.getElementById('btn-stop').disabled = true;
+            alert('This stream was ended by an admin. Please create a new stream to go live again.');
+        }
+
         function stopStreaming() {
+            clearStreamReconnectTimer();
             stopThumbnailCapture();
             isStreaming = false;
             // Unsubscribe from viewer count
@@ -589,6 +626,9 @@
                         case 'session_terminated':
                             handleSessionTerminated(msg.reason);
                             break;
+                        case 'stream_force_ended':
+                            handleStreamForceEnded(msg.stream_id, msg.reason);
+                            break;
                     }
                 } catch (err) {
                     // ignore parse errors
@@ -621,14 +661,9 @@
         }
 
         function handleReconnect(msg) {
-            if (!currentStreamId || !isStreaming) return;
+            if (!currentStreamId || !isStreaming || streamForceEnded) return;
             if (msg.stream_ids && msg.stream_ids.includes(currentStreamId)) {
-                log('Received reconnect event. Reconnecting in 3s...');
-                setTimeout(async function() {
-                    if (isStreaming && currentStreamId) {
-                        await startStreaming();
-                    }
-                }, 3000);
+                scheduleStreamReconnect('Received reconnect event');
             }
         }
 

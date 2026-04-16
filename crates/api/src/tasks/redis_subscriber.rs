@@ -208,12 +208,59 @@ async fn handle_admin_force_end(
     ws_manager: &Arc<WsManager>,
     stream_id: Uuid,
 ) {
-    // 1. Get active session and end it (clears Redis session keys + DECR MTX count)
+    // 0. Kick the publisher from MediaMTX before cleaning up session state.
+    //    We must do this BEFORE end_session so we can still read session:{sid}:mtx.
     let active_session = mediamtx::get_active_session(cache.as_ref(), &stream_id)
         .await
         .ok()
         .flatten();
 
+    if let Some(ref session_id) = active_session {
+        if let Ok(Some(mtx_name)) = mediamtx::get_session_mtx(cache.as_ref(), session_id).await {
+            if let Some(inst) = mtx_instances.iter().find(|i| i.name == mtx_name) {
+                let stream_key = stream_id.to_string();
+                let client = reqwest::Client::new();
+                // List WebRTC sessions on this MTX, find the one publishing our path, and kick it
+                let list_url = format!("{}/v3/webrtcsessions/list", inst.internal_api);
+                match client.get(&list_url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        if let Ok(body) = resp.json::<serde_json::Value>().await {
+                            if let Some(items) = body.get("items").and_then(|v| v.as_array()) {
+                                for item in items {
+                                    let path_match = item.get("path").and_then(|v| v.as_str())
+                                        == Some(&stream_key);
+                                    if path_match {
+                                        if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                                            let kick_url = format!(
+                                                "{}/v3/webrtcsessions/kick/{}",
+                                                inst.internal_api, id
+                                            );
+                                            match client.post(&kick_url).send().await {
+                                                Ok(r) => {
+                                                    tracing::info!(%stream_id, session = id, status = %r.status(), "Kicked MTX WebRTC session")
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!(error = %e, %stream_id, "Failed to kick MTX session")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok(r) => {
+                        tracing::warn!(%stream_id, status = %r.status(), "MTX webrtcsessions/list non-200")
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, %stream_id, "Failed to list MTX sessions for kick")
+                    }
+                }
+            }
+        }
+    }
+
+    // 1. End session (clears Redis session keys + DECR MTX count)
     if let Some(session_id) = active_session {
         if let Err(e) = mediamtx::end_session(cache.as_ref(), &session_id).await {
             tracing::error!(error = %e, %stream_id, "Failed to end session during admin force-end");
@@ -229,7 +276,17 @@ async fn handle_admin_force_end(
         }
     }
 
-    // 3. Unsubscribe chat pub/sub for this stream
+    // 3. Tell local broadcaster/viewers that this stream was force-ended so
+    //    broadcaster UI stops auto-reconnecting immediately.
+    let force_end_msg = ServerMessage::StreamForceEnded {
+        stream_id,
+        reason: "ADMIN_FORCE_ENDED".to_string(),
+    };
+    ws_manager
+        .broadcast_to_stream_subscribers(&stream_id, &force_end_msg)
+        .await;
+
+    // 4. Unsubscribe chat pub/sub for this stream
     if let Err(e) = pubsub
         .unsubscribe(&mediamtx::keys::chat_pubsub_channel(&stream_id))
         .await
@@ -237,7 +294,7 @@ async fn handle_admin_force_end(
         tracing::warn!(error = %e, "Failed to unsubscribe chat pubsub during admin force-end");
     }
 
-    // 4. Publish live_streams event to update all WS clients
+    // 5. Publish live_streams event to update all WS clients
     if let Err(e) = publish_live_streams_event(uow, cache, pubsub, mtx_instances, ws_manager).await
     {
         tracing::error!(error = %e, "Failed to publish live_streams event after admin force-end");

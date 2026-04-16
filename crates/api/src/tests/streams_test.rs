@@ -1,8 +1,10 @@
 use crate::state::AppState;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use cache::CacheStore;
 use chrono::Utc;
 use entity::{stream, user};
+use mediamtx::MtxInstance;
 use repo::UnitOfWork;
 use sea_orm::{DbBackend, MockDatabase, MockExecResult};
 use tower::ServiceExt;
@@ -61,6 +63,16 @@ fn auth_header(user_id: Uuid) -> String {
 
 fn app(state: AppState) -> axum::Router {
     routes::app_router().with_state(state)
+}
+
+fn test_mtx_instance() -> MtxInstance {
+    MtxInstance {
+        name: "mtx-1".to_string(),
+        internal_api: "http://mtx-1:9997".to_string(),
+        public_whip: "http://localhost:8889".to_string(),
+        public_whep: "http://localhost:8889".to_string(),
+        public_hls: "http://localhost:8888".to_string(),
+    }
 }
 
 #[tokio::test]
@@ -138,4 +150,52 @@ async fn create_stream_viewer_forbidden() {
 
     let resp = app(state).oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn create_stream_token_returns_409_when_stream_was_force_ended() {
+    let user = broadcaster_user();
+    let s = test_stream(user.id);
+    let cache = std::sync::Arc::new(cache::InMemoryCache::new());
+    let mtx = test_mtx_instance();
+    cache
+        .set(&mediamtx::keys::mtx_status(&mtx.name), "healthy", None)
+        .await
+        .unwrap();
+    cache
+        .set(&mediamtx::keys::stream_force_ended(&s.id), "1", None)
+        .await
+        .unwrap();
+
+    // access_state: find_by_id, auth middleware find_by_id, stream find_by_id
+    let db = MockDatabase::new(DbBackend::Postgres)
+        .append_query_results([vec![user.clone()]])
+        .append_query_results([vec![user.clone()]])
+        .append_query_results([vec![s.clone()]])
+        .into_connection();
+
+    let state = AppState {
+        uow: UnitOfWork::new(db),
+        config: test_config(),
+        storage: super::test_storage(),
+        metrics: super::test_metrics(),
+        redis_pool: super::test_redis_pool(),
+        cache,
+        pubsub: super::test_pubsub(),
+        live_tasks: Default::default(),
+        mtx_instances: vec![mtx],
+    };
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/v1/streams/{}/token", s.id))
+        .header("authorization", auth_header(user.id))
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app(state).oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    let json = body_to_json(resp.into_body()).await;
+    assert_eq!(json["error"]["message"], "Conflict: STREAM_FORCE_ENDED");
 }
