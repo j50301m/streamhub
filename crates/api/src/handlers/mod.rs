@@ -3,6 +3,8 @@
 //! Each submodule implements the handlers for one route family and defines
 //! its request / response DTOs. Routing is wired up in `crate::routes`.
 
+/// Admin console endpoints.
+pub mod admin;
 /// User auth: register / login / refresh / logout / `/v1/me`.
 pub mod auth;
 /// Live chat: subscribe/send/history via WebSocket + Redis Streams.

@@ -2,6 +2,7 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use common::{AppError, AppState};
 use entity::user;
+use entity::user::UserRole;
 use uuid::Uuid;
 
 /// Authenticated user resolved from a Bearer JWT access token.
@@ -18,6 +19,10 @@ pub struct CurrentUser {
     /// Role controlling authorization (broadcaster / viewer / admin).
     pub role: user::UserRole,
 }
+
+/// Extracts and validates an admin user from the JWT.
+/// Returns 403 if the caller is not an admin.
+pub struct AdminUser(pub CurrentUser);
 
 fn extract_bearer_token(parts: &Parts) -> Result<String, AppError> {
     let header = parts
@@ -65,5 +70,20 @@ impl FromRequestParts<AppState> for CurrentUser {
             email: user_model.email,
             role: user_model.role,
         })
+    }
+}
+
+impl FromRequestParts<AppState> for AdminUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let user = CurrentUser::from_request_parts(parts, state).await?;
+        if user.role != UserRole::Admin {
+            return Err(AppError::Forbidden("admin access required".into()));
+        }
+        Ok(AdminUser(user))
     }
 }

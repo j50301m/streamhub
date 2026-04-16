@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamHub Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #1a1a2e; color: #eee; }
+
+        /* Layout */
+        .app { display: flex; flex-direction: column; min-height: 100vh; }
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 12px 24px; background: #16213e; border-bottom: 1px solid #333; }
+        .header h1 { font-size: 18px; color: #e94560; }
+        .header button { padding: 6px 14px; border: 1px solid #444; border-radius: 4px; background: transparent; color: #aaa; cursor: pointer; font-size: 13px; }
+        .header button:hover { border-color: #e94560; color: #eee; }
+        .body { display: flex; flex: 1; }
+        .sidebar { width: 200px; background: #16213e; border-right: 1px solid #333; padding: 16px 0; flex-shrink: 0; }
+        .sidebar a { display: block; padding: 10px 24px; color: #aaa; text-decoration: none; font-size: 14px; border-left: 3px solid transparent; }
+        .sidebar a:hover { background: #1a2a4e; color: #eee; }
+        .sidebar a.active { color: #e94560; border-left-color: #e94560; background: #1a2a4e; }
+        .sidebar a .coming-soon { font-size: 10px; color: #666; margin-left: 6px; }
+        .content { flex: 1; padding: 24px; overflow-y: auto; }
+        .footer { padding: 10px 24px; text-align: center; font-size: 12px; color: #555; border-top: 1px solid #333; }
+
+        /* Login */
+        .login-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .login-box { background: #16213e; border: 1px solid #333; border-radius: 8px; padding: 32px; width: 360px; }
+        .login-box h2 { margin-bottom: 20px; color: #e94560; font-size: 20px; text-align: center; }
+        .login-box input { width: 100%; padding: 10px 12px; border: 1px solid #444; border-radius: 4px; background: #1a1a2e; color: #eee; font-size: 14px; margin-bottom: 12px; }
+        .login-box button { width: 100%; padding: 10px; border: none; border-radius: 4px; background: #e94560; color: #fff; font-size: 14px; font-weight: bold; cursor: pointer; }
+        .login-box button:hover { background: #c73e54; }
+        .login-box button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .login-error { color: #e94560; font-size: 13px; margin-bottom: 12px; min-height: 18px; }
+
+        /* Dashboard cards */
+        .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .card { background: #16213e; border: 1px solid #333; border-radius: 8px; padding: 20px; }
+        .card .card-label { font-size: 12px; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .card .card-value { font-size: 32px; font-weight: bold; color: #888; }
+        .card .card-value.green { color: #4ecca3; }
+        .card .card-value.red { color: #e94560; }
+
+        /* Table */
+        .table-section h3 { font-size: 16px; color: #aaa; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; background: #16213e; border-radius: 8px; overflow: hidden; }
+        th { text-align: left; padding: 10px 16px; background: #0f1830; font-size: 12px; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; }
+        td { padding: 10px 16px; border-top: 1px solid #222; font-size: 14px; }
+        tr:hover td { background: #1a2a4e; }
+        .empty-row td { text-align: center; color: #666; padding: 24px; }
+
+        /* Coming soon page */
+        .coming-soon-page { display: flex; justify-content: center; align-items: center; height: 300px; color: #555; font-size: 18px; }
+
+        /* Refresh indicator */
+        .refresh-info { font-size: 11px; color: #555; text-align: right; margin-bottom: 12px; }
+
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="login-screen" class="login-container">
+        <div class="login-box">
+            <h2>StreamHub Admin</h2>
+            <div id="login-error" class="login-error"></div>
+            <form id="login-form">
+                <input type="email" id="login-email" placeholder="Email" required autocomplete="email" />
+                <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password" />
+                <button type="submit" id="login-btn">Sign In</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- App Shell (hidden until logged in) -->
+    <div id="app-shell" class="app hidden">
+        <div class="header">
+            <h1>streamhub admin</h1>
+            <button id="logout-btn">Logout</button>
+        </div>
+        <div class="body">
+            <nav class="sidebar">
+                <a href="#dashboard" class="active" data-page="dashboard">Dashboard</a>
+                <a href="#users" data-page="users">Users <span class="coming-soon">soon</span></a>
+                <a href="#streams" data-page="streams">Streams <span class="coming-soon">soon</span></a>
+                <a href="#moderation" data-page="moderation">Moderation <span class="coming-soon">soon</span></a>
+            </nav>
+            <div class="content">
+                <!-- Dashboard page -->
+                <div id="page-dashboard">
+                    <div class="refresh-info">Auto-refresh every 30s &mdash; <span id="last-refresh"></span></div>
+                    <div class="cards">
+                        <div class="card">
+                            <div class="card-label">Live Streams</div>
+                            <div class="card-value" id="card-live">--</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Users</div>
+                            <div class="card-value" id="card-users">--</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">24h Streams</div>
+                            <div class="card-value" id="card-24h">--</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Error Streams</div>
+                            <div class="card-value" id="card-error">--</div>
+                        </div>
+                    </div>
+
+                    <div class="table-section">
+                        <h3>Recent Live Streams</h3>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Title</th>
+                                    <th>Owner</th>
+                                    <th>Started</th>
+                                    <th>Viewers</th>
+                                </tr>
+                            </thead>
+                            <tbody id="live-streams-body">
+                                <tr class="empty-row"><td colspan="4">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Coming soon pages -->
+                <div id="page-users" class="hidden">
+                    <div class="coming-soon-page">Users management &mdash; coming in SPEC-030</div>
+                </div>
+                <div id="page-streams" class="hidden">
+                    <div class="coming-soon-page">Streams management &mdash; coming in SPEC-031</div>
+                </div>
+                <div id="page-moderation" class="hidden">
+                    <div class="coming-soon-page">Moderation panel &mdash; coming in SPEC-031</div>
+                </div>
+            </div>
+        </div>
+        <div class="footer">streamhub admin v0.1</div>
+    </div>
+
+    <script>
+    (function () {
+        var API_BASE = '';
+        var token = localStorage.getItem('admin_token');
+        var refreshTimer = null;
+
+        var loginScreen = document.getElementById('login-screen');
+        var appShell = document.getElementById('app-shell');
+        var loginForm = document.getElementById('login-form');
+        var loginError = document.getElementById('login-error');
+        var loginBtn = document.getElementById('login-btn');
+        var logoutBtn = document.getElementById('logout-btn');
+
+        function detectApiBase() {
+            var loc = window.location;
+            if (loc.port === '' || loc.port === '80' || loc.port === '443') {
+                API_BASE = loc.protocol + '//' + loc.host;
+            } else {
+                API_BASE = loc.protocol + '//' + loc.hostname + ':' + loc.port;
+            }
+        }
+
+        function showLogin() {
+            loginScreen.classList.remove('hidden');
+            appShell.classList.add('hidden');
+            stopRefresh();
+        }
+
+        function showApp() {
+            loginScreen.classList.add('hidden');
+            appShell.classList.remove('hidden');
+            fetchDashboard();
+            startRefresh();
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            token = null;
+            showLogin();
+        }
+
+        function startRefresh() {
+            stopRefresh();
+            refreshTimer = setInterval(fetchDashboard, 30000);
+        }
+
+        function stopRefresh() {
+            if (refreshTimer) {
+                clearInterval(refreshTimer);
+                refreshTimer = null;
+            }
+        }
+
+        function relativeTime(isoStr) {
+            if (!isoStr) return '--';
+            var diff = Date.now() - new Date(isoStr).getTime();
+            var secs = Math.floor(diff / 1000);
+            if (secs < 60) return secs + 's ago';
+            var mins = Math.floor(secs / 60);
+            if (mins < 60) return mins + 'm ago';
+            var hrs = Math.floor(mins / 60);
+            if (hrs < 24) return hrs + 'h ago';
+            var days = Math.floor(hrs / 24);
+            return days + 'd ago';
+        }
+
+        function fetchDashboard() {
+            fetch(API_BASE + '/v1/admin/dashboard', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(function (resp) {
+                if (resp.status === 401) { logout(); throw new Error('unauthorized'); }
+                if (resp.status === 403) {
+                    localStorage.removeItem('admin_token');
+                    token = null;
+                    showLogin();
+                    loginError.textContent = 'You are not an admin';
+                    throw new Error('forbidden');
+                }
+                if (!resp.ok) throw new Error('API error ' + resp.status);
+                return resp.json();
+            })
+            .then(function (json) {
+                renderDashboard(json.data);
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    console.error('Dashboard fetch failed:', err);
+                }
+            });
+        }
+
+        function renderDashboard(data) {
+            var cardLive = document.getElementById('card-live');
+            var cardUsers = document.getElementById('card-users');
+            var card24h = document.getElementById('card-24h');
+            var cardError = document.getElementById('card-error');
+            var lastRefresh = document.getElementById('last-refresh');
+
+            cardLive.textContent = data.live_stream_count;
+            cardLive.className = 'card-value' + (data.live_stream_count > 0 ? ' green' : '');
+
+            cardUsers.textContent = data.total_user_count;
+            cardUsers.className = 'card-value';
+
+            card24h.textContent = data.ended_streams_24h;
+            card24h.className = 'card-value';
+
+            cardError.textContent = data.error_stream_count;
+            cardError.className = 'card-value' + (data.error_stream_count > 0 ? ' red' : '');
+
+            lastRefresh.textContent = new Date().toLocaleTimeString();
+
+            var tbody = document.getElementById('live-streams-body');
+            tbody.innerHTML = '';
+
+            if (data.recent_live_streams.length === 0) {
+                var tr = document.createElement('tr');
+                tr.className = 'empty-row';
+                var td = document.createElement('td');
+                td.setAttribute('colspan', '4');
+                td.textContent = 'No live streams';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                return;
+            }
+
+            data.recent_live_streams.forEach(function (s) {
+                var tr = document.createElement('tr');
+
+                var tdTitle = document.createElement('td');
+                tdTitle.textContent = s.title || '(untitled)';
+                tr.appendChild(tdTitle);
+
+                var tdOwner = document.createElement('td');
+                tdOwner.textContent = s.user_email || '--';
+                tr.appendChild(tdOwner);
+
+                var tdStarted = document.createElement('td');
+                tdStarted.textContent = relativeTime(s.started_at);
+                tr.appendChild(tdStarted);
+
+                var tdViewers = document.createElement('td');
+                tdViewers.textContent = s.viewer_count;
+                tr.appendChild(tdViewers);
+
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Login form
+        loginForm.addEventListener('submit', function (e) {
+            e.preventDefault();
+            loginError.textContent = '';
+            loginBtn.disabled = true;
+
+            var email = document.getElementById('login-email').value;
+            var password = document.getElementById('login-password').value;
+
+            fetch(API_BASE + '/v1/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: email, password: password })
+            })
+            .then(function (resp) {
+                if (!resp.ok) return resp.json().then(function (j) { throw new Error(j.error && j.error.message || 'Login failed'); });
+                return resp.json();
+            })
+            .then(function (json) {
+                token = json.data.access_token;
+                localStorage.setItem('admin_token', token);
+                showApp();
+            })
+            .catch(function (err) {
+                loginError.textContent = err.message;
+            })
+            .finally(function () {
+                loginBtn.disabled = false;
+            });
+        });
+
+        // Logout
+        logoutBtn.addEventListener('click', logout);
+
+        // Sidebar navigation
+        document.querySelectorAll('.sidebar a').forEach(function (link) {
+            link.addEventListener('click', function (e) {
+                e.preventDefault();
+                var page = this.getAttribute('data-page');
+                document.querySelectorAll('.sidebar a').forEach(function (l) { l.classList.remove('active'); });
+                this.classList.add('active');
+                ['dashboard', 'users', 'streams', 'moderation'].forEach(function (p) {
+                    document.getElementById('page-' + p).classList.toggle('hidden', p !== page);
+                });
+            });
+        });
+
+        // Init
+        detectApiBase();
+        if (token) {
+            showApp();
+        } else {
+            showLogin();
+        }
+    })();
+    </script>
+</body>
+</html>

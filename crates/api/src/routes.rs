@@ -66,6 +66,11 @@ pub fn app_router() -> Router<AppState> {
             "/v1/streams/{id}/chat/bans/{user_id}",
             delete(handlers::chat_moderation::unban_user_handler),
         )
+        // Admin
+        .route(
+            "/v1/admin/dashboard",
+            get(handlers::admin::dashboard::dashboard),
+        )
         // WebSocket
         .route("/v1/ws", get(handlers::ws::ws_handler))
         // Internal hooks

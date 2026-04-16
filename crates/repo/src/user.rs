@@ -3,7 +3,8 @@
 
 use entity::user;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter,
+    QuerySelect,
 };
 use uuid::Uuid;
 
@@ -42,6 +43,26 @@ pub async fn find_by_email_for_update(
         .filter(user::Column::Email.eq(email))
         .lock_exclusive()
         .one(conn)
+        .await
+        .map_err(RepoError::from)
+}
+
+/// Counts all users.
+pub async fn count_all(conn: &impl ConnectionTrait) -> Result<u64, RepoError> {
+    user::Entity::find()
+        .count(conn)
+        .await
+        .map_err(RepoError::from)
+}
+
+/// Counts users with the given role.
+pub async fn count_by_role(
+    conn: &impl ConnectionTrait,
+    role: user::UserRole,
+) -> Result<u64, RepoError> {
+    user::Entity::find()
+        .filter(user::Column::Role.eq(role))
+        .count(conn)
         .await
         .map_err(RepoError::from)
 }

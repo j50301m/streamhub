@@ -81,6 +81,24 @@ impl<C: ConnectionTrait> StreamRepoRef<'_, C> {
     pub async fn delete(&self, id: Uuid) -> Result<(), RepoError> {
         crate::stream::delete(self.0, id).await
     }
+
+    /// Counts streams with the given status.
+    pub async fn count_by_status(&self, status: stream::StreamStatus) -> Result<u64, RepoError> {
+        crate::stream::count_by_status(self.0, status).await
+    }
+
+    /// Counts streams that ended on or after the given timestamp.
+    pub async fn count_ended_since(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, RepoError> {
+        crate::stream::count_ended_since(self.0, since).await
+    }
+
+    /// Returns live streams ordered by `started_at` descending, up to `limit`.
+    pub async fn list_live_limited(&self, limit: u64) -> Result<Vec<stream::Model>, RepoError> {
+        crate::stream::list_live_limited(self.0, limit).await
+    }
 }
 
 impl<C: ConnectionTrait> UserRepoRef<'_, C> {
@@ -106,6 +124,16 @@ impl<C: ConnectionTrait> UserRepoRef<'_, C> {
     /// Inserts a new user row.
     pub async fn create(&self, model: user::ActiveModel) -> Result<user::Model, RepoError> {
         crate::user::create(self.0, model).await
+    }
+
+    /// Counts all users.
+    pub async fn count_all(&self) -> Result<u64, RepoError> {
+        crate::user::count_all(self.0).await
+    }
+
+    /// Counts users with the given role.
+    pub async fn count_by_role(&self, role: user::UserRole) -> Result<u64, RepoError> {
+        crate::user::count_by_role(self.0, role).await
     }
 }
 

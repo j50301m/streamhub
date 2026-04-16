@@ -1,3 +1,4 @@
+mod admin_test;
 mod auth_test;
 mod hooks_test;
 mod streams_test;

@@ -74,6 +74,12 @@ pub fn chat_bans_set(stream_id: &Uuid) -> String {
     format!("chat:bans:{stream_id}")
 }
 
+/// Key `stream:{stream_id}:viewer_count` — cached viewer count written by the
+/// periodic viewer-count task, readable from any instance.
+pub fn viewer_count(stream_id: &Uuid) -> String {
+    format!("stream:{stream_id}:viewer_count")
+}
+
 /// Cluster-wide lock key for the viewer-count refresh task.
 pub const VIEWER_COUNT_LOCK: &str = "viewer_count_lock";
 
