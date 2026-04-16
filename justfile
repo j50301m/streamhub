@@ -11,6 +11,7 @@ check:
 
 check-docker:
     docker build -f deploy/app/Dockerfile.api -t streamhub-api:local .
+    docker build -f deploy/bo/Dockerfile.bo-api -t streamhub-bo-api:local .
     docker build -f deploy/web/Dockerfile.web -t streamhub-web:local .
 
 up:
@@ -19,6 +20,7 @@ up:
     docker volume create thumbnails 2>/dev/null || true
     docker compose -f deploy/infra/docker-compose.yml up -d
     docker compose -f deploy/app/docker-compose.yml up --build -d
+    docker compose -f deploy/bo/docker-compose.yml up --build -d
     docker compose -f deploy/media/docker-compose.yml up --build -d
     docker compose -f deploy/web/docker-compose.yml up --build -d
 
@@ -34,6 +36,7 @@ up-all: up up-obs
 down:
     docker compose -f deploy/web/docker-compose.yml down
     docker compose -f deploy/media/docker-compose.yml down
+    docker compose -f deploy/bo/docker-compose.yml down
     docker compose -f deploy/app/docker-compose.yml down
     docker compose -f deploy/infra/docker-compose.yml down
     docker network rm streamhub 2>/dev/null || true
