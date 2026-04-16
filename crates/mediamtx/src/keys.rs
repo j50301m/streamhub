@@ -82,6 +82,13 @@ pub fn stream_owner(stream_id: &Uuid) -> String {
     format!("stream:{stream_id}:owner")
 }
 
+/// Key `stream:{stream_id}:force_ended` — set when an admin force-ends a
+/// stream. Presence blocks future token issuance for this stream so the
+/// broadcaster cannot auto-reconnect into the same ended session.
+pub fn stream_force_ended(stream_id: &Uuid) -> String {
+    format!("stream:{stream_id}:force_ended")
+}
+
 /// Key `stream:{stream_id}:viewer_count` — cached viewer count written by the
 /// periodic viewer-count task, readable from any instance.
 pub fn viewer_count(stream_id: &Uuid) -> String {

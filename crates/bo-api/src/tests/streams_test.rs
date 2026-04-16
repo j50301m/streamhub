@@ -215,6 +215,7 @@ async fn force_end_returns_200_for_live_stream() {
         .into_connection();
 
     let state = test_state(db);
+    let cache = state.cache.clone();
 
     let req = Request::builder()
         .method("POST")
@@ -228,6 +229,13 @@ async fn force_end_returns_200_for_live_stream() {
 
     let json = body_to_json(resp.into_body()).await;
     assert_eq!(json["data"]["status"], "ended");
+    assert!(
+        cache
+            .get(&mediamtx::keys::stream_force_ended(&s.id))
+            .await
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[tokio::test]

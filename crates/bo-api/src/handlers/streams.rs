@@ -258,6 +258,16 @@ pub async fn force_end(
     active_model.ended_at = Set(Some(Utc::now()));
     let updated = state.uow.stream_repo().update(active_model).await?;
 
+    // Block future `/token` issuance for this stream so the broadcaster
+    // frontend cannot auto-reconnect after the MTX session is kicked.
+    if let Err(e) = state
+        .cache
+        .set(&keys::stream_force_ended(&stream_id), "1", None)
+        .await
+    {
+        tracing::error!(error = %e, %stream_id, "Failed to persist force-end flag");
+    }
+
     // Publish admin_force_end event for api's async cleanup
     let event = serde_json::json!({
         "stream_id": stream_id,

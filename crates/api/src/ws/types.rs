@@ -77,6 +77,14 @@ pub enum ServerMessage {
         /// Machine-readable reason (e.g. `"ACCOUNT_SUSPENDED"`).
         reason: String,
     },
+    /// Stream force-ended by an admin. Broadcaster should stop reconnecting
+    /// and treat the current stream as closed.
+    StreamForceEnded {
+        /// Target stream UUID.
+        stream_id: Uuid,
+        /// Machine-readable reason.
+        reason: String,
+    },
 }
 
 /// Reasons a `send_chat` may be rejected by the server.
