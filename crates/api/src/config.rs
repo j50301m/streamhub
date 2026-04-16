@@ -86,6 +86,63 @@ pub struct AppConfig {
     /// [`mediamtx::MtxInstance`] for the shape.
     #[env("MEDIAMTX_INSTANCES", default = "")]
     pub mediamtx_instances_json: String,
+
+    // ── Rate Limiting ─────────────────────────────────────────────
+    /// General authed rate limit: max requests per window.
+    #[env("RATE_LIMIT_GENERAL_AUTHED_LIMIT", default = "120")]
+    pub rate_limit_general_authed_limit: u64,
+    /// General authed rate limit: window in seconds.
+    #[env("RATE_LIMIT_GENERAL_AUTHED_WINDOW", default = "60")]
+    pub rate_limit_general_authed_window: u64,
+
+    /// General unauthed rate limit: max requests per window.
+    #[env("RATE_LIMIT_GENERAL_UNAUTHED_LIMIT", default = "30")]
+    pub rate_limit_general_unauthed_limit: u64,
+    /// General unauthed rate limit: window in seconds.
+    #[env("RATE_LIMIT_GENERAL_UNAUTHED_WINDOW", default = "60")]
+    pub rate_limit_general_unauthed_window: u64,
+
+    /// Login rate limit: max requests per window.
+    #[env("RATE_LIMIT_LOGIN_LIMIT", default = "5")]
+    pub rate_limit_login_limit: u64,
+    /// Login rate limit: window in seconds.
+    #[env("RATE_LIMIT_LOGIN_WINDOW", default = "900")]
+    pub rate_limit_login_window: u64,
+
+    /// Register rate limit: max requests per window.
+    #[env("RATE_LIMIT_REGISTER_LIMIT", default = "5")]
+    pub rate_limit_register_limit: u64,
+    /// Register rate limit: window in seconds.
+    #[env("RATE_LIMIT_REGISTER_WINDOW", default = "900")]
+    pub rate_limit_register_window: u64,
+
+    /// Refresh rate limit: max requests per window.
+    #[env("RATE_LIMIT_REFRESH_LIMIT", default = "10")]
+    pub rate_limit_refresh_limit: u64,
+    /// Refresh rate limit: window in seconds.
+    #[env("RATE_LIMIT_REFRESH_WINDOW", default = "60")]
+    pub rate_limit_refresh_window: u64,
+
+    /// Stream token rate limit: max requests per window.
+    #[env("RATE_LIMIT_STREAM_TOKEN_LIMIT", default = "5")]
+    pub rate_limit_stream_token_limit: u64,
+    /// Stream token rate limit: window in seconds.
+    #[env("RATE_LIMIT_STREAM_TOKEN_WINDOW", default = "60")]
+    pub rate_limit_stream_token_window: u64,
+
+    /// WebSocket upgrade rate limit: max connections per window.
+    #[env("RATE_LIMIT_WS_LIMIT", default = "10")]
+    pub rate_limit_ws_limit: u64,
+    /// WebSocket upgrade rate limit: window in seconds.
+    #[env("RATE_LIMIT_WS_WINDOW", default = "60")]
+    pub rate_limit_ws_window: u64,
+
+    /// Chat message rate limit: max messages per window.
+    #[env("RATE_LIMIT_CHAT_LIMIT", default = "1")]
+    pub rate_limit_chat_limit: u64,
+    /// Chat message rate limit: window in seconds.
+    #[env("RATE_LIMIT_CHAT_WINDOW", default = "1")]
+    pub rate_limit_chat_window: u64,
 }
 
 impl AppConfig {

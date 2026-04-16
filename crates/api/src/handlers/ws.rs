@@ -163,6 +163,8 @@ async fn handle_ws(
                                         state.cache.as_ref(),
                                         state.pubsub.as_ref(),
                                         &state.uow,
+                                        state.rate_limiter.as_ref(),
+                                        &state.chat_rate_limit_policy,
                                         authed.as_ref(),
                                         stream_id,
                                         content,

@@ -1,9 +1,12 @@
 use crate::state::AppState;
 use auth::access_state::AccessState;
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequestParts, Request, State};
 use axum::http::request::Parts;
+use axum::middleware::Next;
+use axum::response::Response;
 use entity::user;
 use error::AppError;
+use rate_limit::RateLimitUserId;
 use uuid::Uuid;
 
 /// Authenticated user resolved from a Bearer JWT access token.
@@ -33,6 +36,31 @@ fn extract_bearer_token(parts: &Parts) -> Result<String, AppError> {
         .ok_or_else(|| AppError::Unauthorized("TOKEN_INVALID".to_string()))?;
 
     Ok(token.to_string())
+}
+
+/// Lightweight middleware that extracts user_id from a valid JWT (if present)
+/// and inserts it as a [`RateLimitUserId`] extension. Does NOT reject invalid
+/// tokens — that is left to the [`CurrentUser`] extractor in handlers.
+pub async fn inject_user_id_extension(
+    State(state): State<AppState>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    if let Some(header) = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(token) = header.strip_prefix("Bearer ") {
+            if let Ok(claims) = auth::jwt::verify_token(token, &state.config.jwt_secret) {
+                if claims.typ == "access" {
+                    req.extensions_mut()
+                        .insert(RateLimitUserId(claims.sub.to_string()));
+                }
+            }
+        }
+    }
+    next.run(req).await
 }
 
 impl FromRequestParts<AppState> for CurrentUser {

@@ -28,6 +28,7 @@ mediamtx = { workspace = true }
 entity = { workspace = true }
 repo = { workspace = true }
 auth = { workspace = true }
+rate-limit = { workspace = true }
 deadpool-redis = { workspace = true }
 
 [dev-dependencies]

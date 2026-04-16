@@ -54,18 +54,21 @@ pub enum SendChatOutcome {
 }
 
 /// Handle a `send_chat` action. Performs: length check → per-user rate-limit
-/// lock → active-session check → XADD → PUBLISH.
+/// → active-session check → XADD → PUBLISH.
 ///
 /// The WS payload is excluded from tracing to avoid leaking chat contents.
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(
     name = "chat.send",
-    skip(cache, pubsub, content),
+    skip(cache, pubsub, rate_limiter, chat_policy, content),
     fields(user_id = ?user.as_ref().map(|u| u.id), %stream_id)
 )]
 pub async fn handle_send_chat(
     cache: &dyn CacheStore,
     pubsub: &dyn PubSub,
     uow: &repo::UnitOfWork,
+    rate_limiter: &dyn rate_limit::RateLimiter,
+    chat_policy: &rate_limit::RateLimitPolicy,
     user: Option<&ChatUser>,
     stream_id: Uuid,
     content: String,
@@ -82,14 +85,16 @@ pub async fn handle_send_chat(
         return SendChatOutcome::Rejected(ChatErrorReason::TooLong);
     }
 
-    let lock_key = mediamtx::keys::chat_ratelimit(&user.id);
-    match cache.set_nx(&lock_key, "1", Some(1)).await {
-        Ok(true) => {}
-        Ok(false) => return SendChatOutcome::Rejected(ChatErrorReason::RateLimited),
-        Err(e) => {
-            tracing::warn!(error = %e, "chat rate-limit set_nx failed");
-            return SendChatOutcome::Rejected(ChatErrorReason::Unknown);
+    // Per-user chat rate limit via rate-limit crate
+    let user_id_str = user.id.to_string();
+    match rate_limiter.check(chat_policy, &user_id_str).await {
+        Some(result) if !result.allowed => {
+            return SendChatOutcome::Rejected(ChatErrorReason::RateLimited);
         }
+        None => {
+            // Fail-open: Redis unavailable — allow the message
+        }
+        _ => {}
     }
 
     // Resolve stream owner for per-broadcaster ban check.
@@ -150,7 +155,6 @@ pub async fn handle_send_chat(
     }
 
     let display_name = user.display_name();
-    let user_id_str = user.id.to_string();
     let msg_id = Uuid::now_v7();
     let msg_id_str = msg_id.to_string();
     let stream_key = mediamtx::keys::chat_stream(&stream_id);
@@ -347,6 +351,15 @@ mod tests {
         repo::UnitOfWork::new(MockDatabase::new(DbBackend::Postgres).into_connection())
     }
 
+    fn chat_policy() -> rate_limit::RateLimitPolicy {
+        rate_limit::RateLimitPolicy {
+            name: "chat".into(),
+            limit: 1,
+            window_secs: 1,
+            key_prefix: "ratelimit:chat".into(),
+        }
+    }
+
     fn user(id: Uuid, email: &str) -> ChatUser {
         ChatUser {
             id,
@@ -384,6 +397,8 @@ mod tests {
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             None,
             Uuid::new_v4(),
             "hi".into(),
@@ -403,8 +418,17 @@ mod tests {
         seed_active_stream(&cache, &stream_id).await;
         let u = user(Uuid::new_v4(), "alice@example.com");
         let content = "a".repeat(501);
-        let out =
-            handle_send_chat(&cache, &pubsub, &mock_uow(), Some(&u), stream_id, content).await;
+        let out = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
+            Some(&u),
+            stream_id,
+            content,
+        )
+        .await;
         assert!(matches!(
             out,
             SendChatOutcome::Rejected(ChatErrorReason::TooLong)
@@ -422,6 +446,8 @@ mod tests {
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             Some(&u),
             stream_id,
             "   ".into(),
@@ -442,6 +468,8 @@ mod tests {
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             Some(&u),
             Uuid::new_v4(),
             "hi".into(),
@@ -460,10 +488,14 @@ mod tests {
         let stream_id = Uuid::new_v4();
         seed_active_stream(&cache, &stream_id).await;
         let u = user(Uuid::new_v4(), "alice@example.com");
+        let limiter = rate_limit::InMemoryRateLimiter::new();
+        let policy = chat_policy();
         let a = handle_send_chat(
             &cache,
             &pubsub,
             &mock_uow(),
+            &limiter,
+            &policy,
             Some(&u),
             stream_id,
             "hi".into(),
@@ -474,6 +506,8 @@ mod tests {
             &cache,
             &pubsub,
             &mock_uow(),
+            &limiter,
+            &policy,
             Some(&u),
             stream_id,
             "hi again".into(),
@@ -496,6 +530,8 @@ mod tests {
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             Some(&u),
             stream_id,
             "hello".into(),
@@ -535,6 +571,8 @@ mod tests {
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             Some(&u),
             stream_id,
             "hi".into(),
@@ -557,6 +595,8 @@ mod tests {
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             Some(&u),
             stream_id,
             "hello".into(),
@@ -587,6 +627,8 @@ mod tests {
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             Some(&u),
             stream_id,
             "hi".into(),
@@ -619,6 +661,8 @@ mod tests {
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             Some(&u),
             stream_id,
             "del me".into(),
@@ -711,6 +755,8 @@ mod tests {
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             Some(&banned),
             stream_a,
             "hi".into(),
@@ -726,17 +772,13 @@ mod tests {
         seed_active_stream(&cache, &stream_b).await;
         seed_stream_owner(&cache, &stream_b, &broadcaster).await;
 
-        // Clear rate-limit so the second call reaches the ban check
-        cache
-            .del(&mediamtx::keys::chat_ratelimit(&banned.id))
-            .await
-            .unwrap();
-
-        // Still banned on stream B
+        // Still banned on stream B (each handle_send_chat uses fresh rate limiter)
         let out = handle_send_chat(
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             Some(&banned),
             stream_b,
             "hi".into(),
@@ -774,6 +816,8 @@ mod tests {
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             Some(&u),
             stream_x,
             "hi".into(),
@@ -784,17 +828,13 @@ mod tests {
             SendChatOutcome::Rejected(ChatErrorReason::Banned)
         ));
 
-        // Clear rate-limit so the second call reaches the ban check
-        cache
-            .del(&mediamtx::keys::chat_ratelimit(&u.id))
-            .await
-            .unwrap();
-
-        // Not banned in broadcaster Y's stream
+        // Not banned in broadcaster Y's stream (each handle_send_chat uses fresh rate limiter)
         let out = handle_send_chat(
             &cache,
             &pubsub,
             &mock_uow(),
+            &rate_limit::InMemoryRateLimiter::new(),
+            &chat_policy(),
             Some(&u),
             stream_y,
             "hi".into(),

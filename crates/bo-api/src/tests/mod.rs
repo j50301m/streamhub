@@ -17,6 +17,8 @@ pub(crate) fn test_config() -> BoConfig {
         host: "127.0.0.1".to_string(),
         port: 8800,
         cors_origins: "http://localhost:3000".to_string(),
+        rate_limit_general_limit: 60,
+        rate_limit_general_window: 60,
     }
 }
 

@@ -38,6 +38,12 @@ pub struct AppState {
     pub live_tasks: Arc<tokio::sync::Mutex<HashMap<Uuid, CancellationToken>>>,
     /// Registered MediaMTX instances available for routing new streams.
     pub mtx_instances: Vec<MtxInstance>,
+    /// Rate limiter shared with middleware and chat handler.
+    pub rate_limiter: Arc<dyn rate_limit::RateLimiter>,
+    /// Chat message rate limit policy (e.g. 1 msg/sec).
+    pub chat_rate_limit_policy: rate_limit::RateLimitPolicy,
+    /// Refresh-token endpoint rate limit policy keyed by refresh-token subject.
+    pub refresh_rate_limit_policy: rate_limit::RateLimitPolicy,
 }
 
 /// Opens the Postgres connection pool used by the API.
