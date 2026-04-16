@@ -1,7 +1,7 @@
+use crate::state::AppState;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use common::AppState;
 use entity::stream;
 use sea_orm::Set;
 use serde::Deserialize;

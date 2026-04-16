@@ -1,8 +1,9 @@
+use crate::state::AppState;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
-use common::{AppError, AppState};
 use entity::stream;
+use error::AppError;
 use sea_orm::Set;
 use serde::Serialize;
 use uuid::Uuid;

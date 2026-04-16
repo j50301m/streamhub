@@ -11,6 +11,8 @@
 
 use anyhow::Result;
 
+/// Environment-driven application configuration.
+pub mod config;
 /// Custom Axum extractors (e.g. unified JSON extractor producing `AppError`).
 pub mod extractors;
 /// HTTP route handlers grouped by resource.
@@ -20,6 +22,8 @@ mod log_format;
 /// Axum middleware (auth, metrics).
 pub mod middleware;
 mod routes;
+/// Shared application state and database initialisation.
+pub mod state;
 mod tasks;
 /// WebSocket connection manager and message types.
 pub mod ws;

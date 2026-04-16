@@ -1,10 +1,9 @@
-mod admin_test;
 mod auth_test;
 mod hooks_test;
 mod streams_test;
 
+use crate::config::AppConfig;
 use axum::body::Body;
-use common::AppConfig;
 use http_body_util::BodyExt;
 use metrics_exporter_prometheus::PrometheusHandle;
 

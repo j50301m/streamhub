@@ -1,5 +1,5 @@
+use crate::state::AppState;
 use axum::extract::State;
-use common::AppState;
 
 /// `GET /metrics` — Prometheus text-format exposition.
 ///

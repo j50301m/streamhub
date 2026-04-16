@@ -1,7 +1,7 @@
 use axum::extract::FromRequest;
 use axum::extract::rejection::JsonRejection;
 use axum::response::{IntoResponse, Response};
-use common::AppError;
+use error::AppError;
 use serde::de::DeserializeOwned;
 
 /// JSON extractor that maps deserialization failures to `AppError::Validation`

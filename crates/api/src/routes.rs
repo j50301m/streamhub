@@ -1,7 +1,7 @@
+use crate::state::AppState;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post};
-use common::AppState;
 use serde_json::{Value, json};
 
 use crate::handlers;
@@ -65,11 +65,6 @@ pub fn app_router() -> Router<AppState> {
         .route(
             "/v1/streams/{id}/chat/bans/{user_id}",
             delete(handlers::chat_moderation::unban_user_handler),
-        )
-        // Admin
-        .route(
-            "/v1/admin/dashboard",
-            get(handlers::admin::dashboard::dashboard),
         )
         // WebSocket
         .route("/v1/ws", get(handlers::ws::ws_handler))

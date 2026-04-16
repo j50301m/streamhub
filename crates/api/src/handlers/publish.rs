@@ -1,8 +1,8 @@
+use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use chrono::Utc;
-use common::AppState;
 use entity::stream;
 use mediamtx::keys;
 use sea_orm::Set;
@@ -476,7 +476,7 @@ async fn run_transcode(
     stream_id: Uuid,
     stream_key: &str,
     storage: Arc<dyn storage::ObjectStorage>,
-    config: &common::AppConfig,
+    config: &crate::config::AppConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let stream_dir = PathBuf::from(recordings_path).join(stream_key);
 
@@ -612,7 +612,7 @@ async fn run_transcode_gcp(
     stream_key: &str,
     input_mp4: &Path,
     storage: &dyn storage::ObjectStorage,
-    config: &common::AppConfig,
+    config: &crate::config::AppConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let store = storage;
 
@@ -659,12 +659,13 @@ async fn run_transcode_gcp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::AppConfig;
+    use crate::state::AppState;
     use axum::Router;
     use axum::body::Body;
     use axum::http::Request;
     use axum::routing::post;
     use cache::CacheStore;
-    use common::{AppConfig, AppState};
     use repo::UnitOfWork;
     use sea_orm::{DbBackend, MockDatabase, MockExecResult};
     use tower::ServiceExt;

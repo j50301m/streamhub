@@ -1,14 +1,15 @@
 use axum::Json;
 use axum::extract::State;
 use chrono::Utc;
-use common::{AppError, AppState};
 use entity::stream::StreamStatus;
 use entity::user::UserRole;
+use error::AppError;
 use mediamtx::keys;
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::middleware::AdminUser;
+use crate::extractors::AdminUser;
+use crate::state::BoAppState;
 
 /// Response wrapper for `GET /v1/admin/dashboard`.
 #[derive(Debug, Serialize)]
@@ -54,7 +55,7 @@ pub struct RecentLiveStream {
 /// `GET /v1/admin/dashboard` — returns platform summary for the admin console.
 pub async fn dashboard(
     _admin: AdminUser,
-    State(state): State<AppState>,
+    State(state): State<BoAppState>,
 ) -> Result<Json<DashboardResponse>, AppError> {
     let stream_repo = state.uow.stream_repo();
     let user_repo = state.uow.user_repo();
