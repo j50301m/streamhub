@@ -131,6 +131,45 @@ pub async fn update(
     model.update(conn).await.map_err(RepoError::from)
 }
 
+/// Counts streams with the given status.
+pub async fn count_by_status(
+    conn: &impl ConnectionTrait,
+    status: stream::StreamStatus,
+) -> Result<u64, RepoError> {
+    stream::Entity::find()
+        .filter(stream::Column::Status.eq(status))
+        .count(conn)
+        .await
+        .map_err(RepoError::from)
+}
+
+/// Counts streams that ended on or after the given timestamp.
+pub async fn count_ended_since(
+    conn: &impl ConnectionTrait,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<u64, RepoError> {
+    stream::Entity::find()
+        .filter(stream::Column::Status.eq(stream::StreamStatus::Ended))
+        .filter(stream::Column::EndedAt.gte(since))
+        .count(conn)
+        .await
+        .map_err(RepoError::from)
+}
+
+/// Returns live streams ordered by `started_at` descending, up to `limit`.
+pub async fn list_live_limited(
+    conn: &impl ConnectionTrait,
+    limit: u64,
+) -> Result<Vec<stream::Model>, RepoError> {
+    stream::Entity::find()
+        .filter(stream::Column::Status.eq(stream::StreamStatus::Live))
+        .order_by_desc(stream::Column::StartedAt)
+        .limit(limit)
+        .all(conn)
+        .await
+        .map_err(RepoError::from)
+}
+
 /// Deletes a stream by UUID. Succeeds silently if the row is absent.
 pub async fn delete(conn: &impl ConnectionTrait, id: Uuid) -> Result<(), RepoError> {
     stream::Entity::delete_by_id(id)

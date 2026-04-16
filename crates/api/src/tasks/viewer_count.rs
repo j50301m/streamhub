@@ -123,6 +123,15 @@ async fn poll_viewer_counts(
                     Err(_) => continue,
                 };
 
+                // Write to Redis so any instance (e.g. admin dashboard) can read it.
+                let _ = cache
+                    .set(
+                        &keys::viewer_count(&stream_id),
+                        &reader_count.to_string(),
+                        Some(30),
+                    )
+                    .await;
+
                 if ws_manager
                     .update_viewer_count(stream_id, reader_count)
                     .await

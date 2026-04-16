@@ -4,4 +4,4 @@ mod auth;
 /// HTTP request counter and latency histogram middleware.
 pub mod metrics;
 
-pub use auth::CurrentUser;
+pub use auth::{AdminUser, CurrentUser};
