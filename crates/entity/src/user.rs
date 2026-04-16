@@ -25,6 +25,7 @@ pub struct Model {
     pub password_hash: String,
     pub role: UserRole,
     #[serde(default)]
+    #[sea_orm(default_value = "false")]
     pub is_suspended: bool,
     pub suspended_until: Option<ChronoDateTimeUtc>,
     pub suspension_reason: Option<String>,
