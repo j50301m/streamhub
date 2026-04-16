@@ -91,6 +91,16 @@ pub async fn handle_send_chat(
         }
     }
 
+    let ban_key = mediamtx::keys::chat_ban(&stream_id, &user.id);
+    match cache.get(&ban_key).await {
+        Ok(Some(_)) => return SendChatOutcome::Rejected(ChatErrorReason::Banned),
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "chat ban check failed");
+            return SendChatOutcome::Rejected(ChatErrorReason::Unknown);
+        }
+    }
+
     let active_key = mediamtx::keys::stream_active_session(&stream_id);
     match cache.get(&active_key).await {
         Ok(Some(_)) => {}
@@ -103,6 +113,8 @@ pub async fn handle_send_chat(
 
     let display_name = user.display_name();
     let user_id_str = user.id.to_string();
+    let msg_id = Uuid::now_v7();
+    let msg_id_str = msg_id.to_string();
     let stream_key = mediamtx::keys::chat_stream(&stream_id);
 
     let entry_id = match cache
@@ -110,6 +122,7 @@ pub async fn handle_send_chat(
             &stream_key,
             CHAT_STREAM_MAXLEN,
             &[
+                ("id", msg_id_str.as_str()),
                 ("user_id", user_id_str.as_str()),
                 ("display_name", display_name.as_str()),
                 ("content", trimmed),
@@ -128,8 +141,16 @@ pub async fn handle_send_chat(
         tracing::warn!(error = %e, "chat EXPIRE failed (message still stored)");
     }
 
+    let msgindex_key = mediamtx::keys::chat_msgindex(&stream_id);
+    if let Err(e) = cache.hset(&msgindex_key, &msg_id_str, &entry_id).await {
+        tracing::warn!(error = %e, "chat HSET msgindex failed");
+    }
+    if let Err(e) = cache.expire(&msgindex_key, CHAT_STREAM_TTL_SECS).await {
+        tracing::warn!(error = %e, "chat msgindex EXPIRE failed");
+    }
+
     let message = ChatMessagePayload {
-        id: entry_id.clone(),
+        id: msg_id_str,
         stream_id,
         user_id: user.id,
         display_name,
@@ -181,19 +202,24 @@ pub async fn handle_subscribe_chat(
         .rev()
         .map(|entry| {
             let ts_ms = parse_entry_ts_ms(&entry.id);
+            let mut msg_id = String::new();
             let mut user_id = Uuid::nil();
             let mut display_name = String::new();
             let mut content = String::new();
             for (f, v) in entry.fields {
                 match f.as_str() {
+                    "id" => msg_id = v,
                     "user_id" => user_id = Uuid::parse_str(&v).unwrap_or(Uuid::nil()),
                     "display_name" => display_name = v,
                     "content" => content = v,
                     _ => {}
                 }
             }
+            if msg_id.is_empty() {
+                msg_id = entry.id;
+            }
             ChatMessagePayload {
-                id: entry.id,
+                id: msg_id,
                 stream_id,
                 user_id,
                 display_name,
@@ -389,5 +415,138 @@ mod tests {
     async fn display_name_is_email_local_part() {
         let u = user(Uuid::new_v4(), "alice@example.com");
         assert_eq!(u.display_name(), "alice");
+    }
+
+    #[tokio::test]
+    async fn banned_user_cannot_send() {
+        let cache = InMemoryCache::new();
+        let pubsub = InMemoryPubSub::new();
+        let stream_id = Uuid::new_v4();
+        seed_active_stream(&cache, &stream_id).await;
+        let u = user(Uuid::new_v4(), "banned@example.com");
+        let ban_key = mediamtx::keys::chat_ban(&stream_id, &u.id);
+        cache.set(&ban_key, "1", None).await.unwrap();
+        let out = handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "hi".into()).await;
+        assert!(matches!(
+            out,
+            SendChatOutcome::Rejected(ChatErrorReason::Banned)
+        ));
+    }
+
+    #[tokio::test]
+    async fn msg_id_is_uuid_v7_format() {
+        let cache = InMemoryCache::new();
+        let pubsub = InMemoryPubSub::new();
+        let stream_id = Uuid::new_v4();
+        seed_active_stream(&cache, &stream_id).await;
+        let u = user(Uuid::new_v4(), "alice@example.com");
+        let out = handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "hello".into()).await;
+        assert!(matches!(out, SendChatOutcome::Accepted));
+
+        let key = mediamtx::keys::chat_stream(&stream_id);
+        let entries = cache.xrevrange(&key, 10).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        let id_field = entries[0]
+            .fields
+            .iter()
+            .find(|(f, _)| f == "id")
+            .map(|(_, v)| v.as_str())
+            .unwrap();
+        assert!(Uuid::parse_str(id_field).is_ok());
+    }
+
+    #[tokio::test]
+    async fn msgindex_written_on_send() {
+        let cache = InMemoryCache::new();
+        let pubsub = InMemoryPubSub::new();
+        let stream_id = Uuid::new_v4();
+        seed_active_stream(&cache, &stream_id).await;
+        let u = user(Uuid::new_v4(), "alice@example.com");
+        handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "hi".into()).await;
+
+        let key = mediamtx::keys::chat_stream(&stream_id);
+        let entries = cache.xrevrange(&key, 10).await.unwrap();
+        let msg_id = entries[0]
+            .fields
+            .iter()
+            .find(|(f, _)| f == "id")
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        let entry_id = &entries[0].id;
+
+        let msgindex_key = mediamtx::keys::chat_msgindex(&stream_id);
+        let stored = cache.hget(&msgindex_key, &msg_id).await.unwrap();
+        assert_eq!(stored.as_deref(), Some(entry_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn xdel_removes_message_from_stream() {
+        let cache = InMemoryCache::new();
+        let pubsub = InMemoryPubSub::new();
+        let stream_id = Uuid::new_v4();
+        seed_active_stream(&cache, &stream_id).await;
+        let u = user(Uuid::new_v4(), "alice@example.com");
+        handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "del me".into()).await;
+
+        let key = mediamtx::keys::chat_stream(&stream_id);
+        let entries = cache.xrevrange(&key, 10).await.unwrap();
+        let msg_id = entries[0]
+            .fields
+            .iter()
+            .find(|(f, _)| f == "id")
+            .map(|(_, v)| v.clone())
+            .unwrap();
+
+        let msgindex_key = mediamtx::keys::chat_msgindex(&stream_id);
+        let entry_id = cache.hget(&msgindex_key, &msg_id).await.unwrap().unwrap();
+        cache.xdel(&key, &entry_id).await.unwrap();
+        cache.hdel(&msgindex_key, &msg_id).await.unwrap();
+
+        let after = cache.xrevrange(&key, 10).await.unwrap();
+        assert!(after.is_empty());
+        assert!(cache.hget(&msgindex_key, &msg_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn ban_and_unban_flow() {
+        let cache = InMemoryCache::new();
+        let stream_id = Uuid::new_v4();
+        let target = Uuid::new_v4();
+
+        let ban_key = mediamtx::keys::chat_ban(&stream_id, &target);
+        let bans_set_key = mediamtx::keys::chat_bans_set(&stream_id);
+
+        cache.set(&ban_key, "1", Some(600)).await.unwrap();
+        cache
+            .sadd(&bans_set_key, &target.to_string())
+            .await
+            .unwrap();
+
+        assert!(cache.get(&ban_key).await.unwrap().is_some());
+        let members = cache.smembers(&bans_set_key).await.unwrap();
+        assert!(members.contains(&target.to_string()));
+
+        cache.del(&ban_key).await.unwrap();
+        cache
+            .srem(&bans_set_key, &target.to_string())
+            .await
+            .unwrap();
+
+        assert!(cache.get(&ban_key).await.unwrap().is_none());
+        let members = cache.smembers(&bans_set_key).await.unwrap();
+        assert!(!members.contains(&target.to_string()));
+    }
+
+    #[tokio::test]
+    async fn permanent_ban_has_no_ttl() {
+        let cache = InMemoryCache::new();
+        let stream_id = Uuid::new_v4();
+        let target = Uuid::new_v4();
+
+        let ban_key = mediamtx::keys::chat_ban(&stream_id, &target);
+        cache.set(&ban_key, "1", None).await.unwrap();
+
+        let ttl = cache.ttl(&ban_key).await.unwrap();
+        assert_eq!(ttl, -1);
     }
 }

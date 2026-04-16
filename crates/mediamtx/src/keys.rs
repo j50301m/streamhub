@@ -59,6 +59,21 @@ pub fn chat_pubsub_channel(stream_id: &Uuid) -> String {
     format!("streamhub:chat:{stream_id}")
 }
 
+/// Key `chat:{stream_id}:msgindex` — HASH mapping UUID v7 msg_id → Redis Stream entry_id.
+pub fn chat_msgindex(stream_id: &Uuid) -> String {
+    format!("chat:{stream_id}:msgindex")
+}
+
+/// Key `chat:ban:{stream_id}:{user_id}` — exists while the user is banned from the stream.
+pub fn chat_ban(stream_id: &Uuid, user_id: &Uuid) -> String {
+    format!("chat:ban:{stream_id}:{user_id}")
+}
+
+/// Key `chat:bans:{stream_id}` — SET of banned user_ids for the stream.
+pub fn chat_bans_set(stream_id: &Uuid) -> String {
+    format!("chat:bans:{stream_id}")
+}
+
 /// Cluster-wide lock key for the viewer-count refresh task.
 pub const VIEWER_COUNT_LOCK: &str = "viewer_count_lock";
 

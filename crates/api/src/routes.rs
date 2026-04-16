@@ -1,6 +1,6 @@
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use common::AppState;
 use serde_json::{Value, json};
 
@@ -51,6 +51,20 @@ pub fn app_router() -> Router<AppState> {
         .route(
             "/v1/streams/{id}/recordings",
             get(handlers::streams::list_recordings),
+        )
+        // Chat moderation
+        .route(
+            "/v1/streams/{id}/chat/messages/{msg_id}",
+            delete(handlers::chat_moderation::delete_message_handler),
+        )
+        .route(
+            "/v1/streams/{id}/chat/bans",
+            post(handlers::chat_moderation::ban_user_handler)
+                .get(handlers::chat_moderation::list_bans_handler),
+        )
+        .route(
+            "/v1/streams/{id}/chat/bans/{user_id}",
+            delete(handlers::chat_moderation::unban_user_handler),
         )
         // WebSocket
         .route("/v1/ws", get(handlers::ws::ws_handler))

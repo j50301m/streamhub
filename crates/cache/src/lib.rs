@@ -7,9 +7,9 @@
 //! impl used by tests.
 #![warn(missing_docs)]
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use deadpool_redis::Pool as RedisPool;
@@ -70,14 +70,42 @@ pub trait CacheStore: Send + Sync {
     /// XREVRANGE reading up to `count` entries from newest to oldest between
     /// the open endpoints `"+"` and `"-"`.
     async fn xrevrange(&self, key: &str, count: usize) -> Result<Vec<StreamEntry>, anyhow::Error>;
+
+    /// XDEL — remove an entry from a Redis Stream. Returns the number of
+    /// entries actually removed (0 if the entry was already gone).
+    async fn xdel(&self, key: &str, entry_id: &str) -> Result<i32, anyhow::Error>;
+
+    /// HSET a single `field` → `value` on the hash at `key`.
+    async fn hset(&self, key: &str, field: &str, value: &str) -> Result<(), anyhow::Error>;
+
+    /// HGET — read the value of `field` from the hash at `key`.
+    async fn hget(&self, key: &str, field: &str) -> Result<Option<String>, anyhow::Error>;
+
+    /// HDEL — remove `field` from the hash at `key`. Missing keys are not an error.
+    async fn hdel(&self, key: &str, field: &str) -> Result<(), anyhow::Error>;
+
+    /// SADD — add `member` to the set at `key`. Returns `true` if newly added.
+    async fn sadd(&self, key: &str, member: &str) -> Result<bool, anyhow::Error>;
+
+    /// SREM — remove `member` from the set at `key`. Returns `true` if removed.
+    async fn srem(&self, key: &str, member: &str) -> Result<bool, anyhow::Error>;
+
+    /// SMEMBERS — list all members of the set at `key`.
+    async fn smembers(&self, key: &str) -> Result<Vec<String>, anyhow::Error>;
+
+    /// TTL — remaining seconds for `key`. Returns `-2` if missing, `-1` if no expiry, otherwise > 0.
+    async fn ttl(&self, key: &str) -> Result<i64, anyhow::Error>;
 }
 
-/// In-memory [`CacheStore`] backed by a `HashMap`. TTLs are accepted but not
-/// enforced; intended for unit tests only.
+/// In-memory [`CacheStore`] backed by a `HashMap` with real TTL enforcement.
+/// Expired keys are lazily removed on access.
 pub struct InMemoryCache {
-    data: Mutex<HashMap<String, String>>,
+    /// `(value, optional expiry instant)`.
+    data: Mutex<HashMap<String, (String, Option<Instant>)>>,
     streams: Mutex<HashMap<String, VecDeque<StreamEntry>>>,
     stream_seq: Mutex<u64>,
+    hashes: Mutex<HashMap<String, HashMap<String, String>>>,
+    sets: Mutex<HashMap<String, HashSet<String>>>,
 }
 
 impl InMemoryCache {
@@ -87,6 +115,8 @@ impl InMemoryCache {
             data: Mutex::new(HashMap::new()),
             streams: Mutex::new(HashMap::new()),
             stream_seq: Mutex::new(0),
+            hashes: Mutex::new(HashMap::new()),
+            sets: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -100,18 +130,29 @@ impl Default for InMemoryCache {
 #[async_trait]
 impl CacheStore for InMemoryCache {
     async fn get(&self, key: &str) -> Result<Option<String>, anyhow::Error> {
-        let data = self.data.lock().await;
-        Ok(data.get(key).cloned())
+        let mut data = self.data.lock().await;
+        if let Some((val, exp)) = data.get(key) {
+            if let Some(deadline) = exp {
+                if Instant::now() >= *deadline {
+                    data.remove(key);
+                    return Ok(None);
+                }
+            }
+            Ok(Some(val.clone()))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn set(
         &self,
         key: &str,
         value: &str,
-        _ttl_secs: Option<u64>,
+        ttl_secs: Option<u64>,
     ) -> Result<(), anyhow::Error> {
+        let deadline = ttl_secs.map(|t| Instant::now() + Duration::from_secs(t));
         let mut data = self.data.lock().await;
-        data.insert(key.to_string(), value.to_string());
+        data.insert(key.to_string(), (value.to_string(), deadline));
         Ok(())
     }
 
@@ -125,18 +166,25 @@ impl CacheStore for InMemoryCache {
         &self,
         key: &str,
         value: &str,
-        _ttl_secs: Option<u64>,
+        ttl_secs: Option<u64>,
     ) -> Result<bool, anyhow::Error> {
         let mut data = self.data.lock().await;
-        if data.contains_key(key) {
-            Ok(false)
-        } else {
-            data.insert(key.to_string(), value.to_string());
-            Ok(true)
+        if let Some((_, exp)) = data.get(key) {
+            let expired = exp.is_some_and(|d| Instant::now() >= d);
+            if !expired {
+                return Ok(false);
+            }
         }
+        let deadline = ttl_secs.map(|t| Instant::now() + Duration::from_secs(t));
+        data.insert(key.to_string(), (value.to_string(), deadline));
+        Ok(true)
     }
 
-    async fn expire(&self, _key: &str, _ttl_secs: u64) -> Result<(), anyhow::Error> {
+    async fn expire(&self, key: &str, ttl_secs: u64) -> Result<(), anyhow::Error> {
+        let mut data = self.data.lock().await;
+        if let Some(entry) = data.get_mut(key) {
+            entry.1 = Some(Instant::now() + Duration::from_secs(ttl_secs));
+        }
         Ok(())
     }
 
@@ -178,6 +226,79 @@ impl CacheStore for InMemoryCache {
             .get(key)
             .map(|buf| buf.iter().rev().take(count).cloned().collect())
             .unwrap_or_default())
+    }
+
+    async fn xdel(&self, key: &str, entry_id: &str) -> Result<i32, anyhow::Error> {
+        let mut streams = self.streams.lock().await;
+        if let Some(buf) = streams.get_mut(key) {
+            let before = buf.len();
+            buf.retain(|e| e.id != entry_id);
+            Ok((before - buf.len()) as i32)
+        } else {
+            Ok(0)
+        }
+    }
+
+    async fn hset(&self, key: &str, field: &str, value: &str) -> Result<(), anyhow::Error> {
+        let mut hashes = self.hashes.lock().await;
+        hashes
+            .entry(key.to_string())
+            .or_default()
+            .insert(field.to_string(), value.to_string());
+        Ok(())
+    }
+
+    async fn hget(&self, key: &str, field: &str) -> Result<Option<String>, anyhow::Error> {
+        let hashes = self.hashes.lock().await;
+        Ok(hashes.get(key).and_then(|h| h.get(field).cloned()))
+    }
+
+    async fn hdel(&self, key: &str, field: &str) -> Result<(), anyhow::Error> {
+        let mut hashes = self.hashes.lock().await;
+        if let Some(h) = hashes.get_mut(key) {
+            h.remove(field);
+        }
+        Ok(())
+    }
+
+    async fn sadd(&self, key: &str, member: &str) -> Result<bool, anyhow::Error> {
+        let mut sets = self.sets.lock().await;
+        Ok(sets
+            .entry(key.to_string())
+            .or_default()
+            .insert(member.to_string()))
+    }
+
+    async fn srem(&self, key: &str, member: &str) -> Result<bool, anyhow::Error> {
+        let mut sets = self.sets.lock().await;
+        Ok(sets.get_mut(key).map(|s| s.remove(member)).unwrap_or(false))
+    }
+
+    async fn smembers(&self, key: &str) -> Result<Vec<String>, anyhow::Error> {
+        let sets = self.sets.lock().await;
+        Ok(sets
+            .get(key)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default())
+    }
+
+    async fn ttl(&self, key: &str) -> Result<i64, anyhow::Error> {
+        let mut data = self.data.lock().await;
+        match data.get(key) {
+            None => Ok(-2),
+            Some((_, exp)) => match exp {
+                None => Ok(-1),
+                Some(deadline) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        data.remove(key);
+                        Ok(-2)
+                    } else {
+                        Ok(remaining.as_secs() as i64)
+                    }
+                }
+            },
+        }
     }
 }
 
@@ -288,6 +409,61 @@ impl CacheStore for RedisCacheStore {
             .into_iter()
             .map(|(id, fields)| StreamEntry { id, fields })
             .collect())
+    }
+
+    async fn xdel(&self, key: &str, entry_id: &str) -> Result<i32, anyhow::Error> {
+        let mut conn = self.pool.get().await?;
+        let count: i32 = deadpool_redis::redis::cmd("XDEL")
+            .arg(key)
+            .arg(entry_id)
+            .query_async(&mut *conn)
+            .await?;
+        Ok(count)
+    }
+
+    async fn hset(&self, key: &str, field: &str, value: &str) -> Result<(), anyhow::Error> {
+        let mut conn = self.pool.get().await?;
+        let _: () = conn.hset(key, field, value).await?;
+        Ok(())
+    }
+
+    async fn hget(&self, key: &str, field: &str) -> Result<Option<String>, anyhow::Error> {
+        let mut conn = self.pool.get().await?;
+        let val: Option<String> = conn.hget(key, field).await?;
+        Ok(val)
+    }
+
+    async fn hdel(&self, key: &str, field: &str) -> Result<(), anyhow::Error> {
+        let mut conn = self.pool.get().await?;
+        let _: () = conn.hdel(key, field).await?;
+        Ok(())
+    }
+
+    async fn sadd(&self, key: &str, member: &str) -> Result<bool, anyhow::Error> {
+        let mut conn = self.pool.get().await?;
+        let added: i32 = conn.sadd(key, member).await?;
+        Ok(added > 0)
+    }
+
+    async fn srem(&self, key: &str, member: &str) -> Result<bool, anyhow::Error> {
+        let mut conn = self.pool.get().await?;
+        let removed: i32 = conn.srem(key, member).await?;
+        Ok(removed > 0)
+    }
+
+    async fn smembers(&self, key: &str) -> Result<Vec<String>, anyhow::Error> {
+        let mut conn = self.pool.get().await?;
+        let members: Vec<String> = conn.smembers(key).await?;
+        Ok(members)
+    }
+
+    async fn ttl(&self, key: &str) -> Result<i64, anyhow::Error> {
+        let mut conn = self.pool.get().await?;
+        let ttl: i64 = deadpool_redis::redis::cmd("TTL")
+            .arg(key)
+            .query_async(&mut *conn)
+            .await?;
+        Ok(ttl)
     }
 }
 

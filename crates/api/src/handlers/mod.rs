@@ -7,6 +7,8 @@
 pub mod auth;
 /// Live chat: subscribe/send/history via WebSocket + Redis Streams.
 pub mod chat;
+/// Chat moderation: delete messages, ban/unban users.
+pub mod chat_moderation;
 /// MTX drain: mark a MediaMTX instance as draining and evict clients.
 pub mod drain;
 /// Health probes for DB and Redis.
