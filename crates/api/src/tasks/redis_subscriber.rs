@@ -20,6 +20,57 @@ pub async fn spawn(
         }
     };
 
+    // Subscribe to user_suspended channel for cross-instance disconnect
+    let mut user_suspended_rx = match pubsub
+        .subscribe(mediamtx::keys::USER_SUSPENDED_CHANNEL)
+        .await
+    {
+        Ok(rx) => rx,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to subscribe to user_suspended channel");
+            return;
+        }
+    };
+
+    let ws_mgr2 = ws_manager.clone();
+    let shutdown2 = shutdown.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown2.cancelled() => {
+                    tracing::info!("User-suspended subscriber task shutting down");
+                    break;
+                }
+                result = user_suspended_rx.recv() => {
+                    match result {
+                        Ok(payload) => {
+                            #[derive(serde::Deserialize)]
+                            struct UserSuspendedEvent {
+                                user_id: uuid::Uuid,
+                            }
+                            match serde_json::from_str::<UserSuspendedEvent>(&payload) {
+                                Ok(event) => {
+                                    tracing::info!(user_id = %event.user_id, "Received user_suspended event, disconnecting WS");
+                                    ws_mgr2.disconnect_user(&event.user_id).await;
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "Failed to parse user_suspended event");
+                                }
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(skipped = n, "User-suspended subscriber lagged");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tracing::warn!("User-suspended subscriber channel closed");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -62,5 +113,5 @@ pub async fn spawn(
         }
     });
 
-    tracing::info!("Spawned Redis subscriber task for streamhub:events");
+    tracing::info!("Spawned Redis subscriber tasks for streamhub:events and user_suspended");
 }

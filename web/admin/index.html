@@ -56,6 +56,65 @@
         .refresh-info { font-size: 11px; color: #555; text-align: right; margin-bottom: 12px; }
 
         .hidden { display: none; }
+
+        /* Users page */
+        .users-toolbar { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
+        .users-toolbar input, .users-toolbar select {
+            padding: 8px 12px; border: 1px solid #444; border-radius: 4px;
+            background: #1a1a2e; color: #eee; font-size: 13px;
+        }
+        .users-toolbar input { flex: 1; min-width: 200px; }
+        .users-toolbar select { min-width: 120px; }
+
+        .status-active { color: #4ecca3; }
+        .status-suspended { color: #e94560; }
+
+        .action-btn {
+            padding: 4px 10px; border: 1px solid #444; border-radius: 4px;
+            background: transparent; color: #aaa; cursor: pointer; font-size: 12px;
+            margin-right: 4px;
+        }
+        .action-btn:hover { border-color: #e94560; color: #eee; }
+        .action-btn.danger { border-color: #e94560; color: #e94560; }
+        .action-btn.danger:hover { background: #e94560; color: #fff; }
+        .action-btn.success { border-color: #4ecca3; color: #4ecca3; }
+        .action-btn.success:hover { background: #4ecca3; color: #fff; }
+
+        .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 16px; align-items: center; }
+        .pagination button {
+            padding: 6px 12px; border: 1px solid #444; border-radius: 4px;
+            background: transparent; color: #aaa; cursor: pointer; font-size: 13px;
+        }
+        .pagination button:hover { border-color: #e94560; color: #eee; }
+        .pagination button:disabled { opacity: 0.3; cursor: not-allowed; }
+        .pagination span { color: #888; font-size: 13px; }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 100;
+        }
+        .modal {
+            background: #16213e; border: 1px solid #333; border-radius: 8px;
+            padding: 24px; width: 400px; max-width: 90%;
+        }
+        .modal h3 { margin-bottom: 16px; color: #eee; font-size: 16px; }
+        .modal label { display: block; font-size: 13px; color: #aaa; margin-bottom: 4px; }
+        .modal select, .modal input, .modal textarea {
+            width: 100%; padding: 8px 12px; border: 1px solid #444; border-radius: 4px;
+            background: #1a1a2e; color: #eee; font-size: 13px; margin-bottom: 12px;
+        }
+        .modal textarea { resize: vertical; min-height: 60px; }
+        .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+        .modal-actions button { padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+        .modal-actions .btn-cancel { border: 1px solid #444; background: transparent; color: #aaa; }
+        .modal-actions .btn-confirm { border: none; background: #e94560; color: #fff; font-weight: bold; }
+
+        /* Role select in table */
+        .role-select {
+            padding: 4px 8px; border: 1px solid #444; border-radius: 4px;
+            background: #1a1a2e; color: #eee; font-size: 12px; cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -81,7 +140,7 @@
         <div class="body">
             <nav class="sidebar">
                 <a href="#dashboard" class="active" data-page="dashboard">Dashboard</a>
-                <a href="#users" data-page="users">Users <span class="coming-soon">soon</span></a>
+                <a href="#users" data-page="users">Users</a>
                 <a href="#streams" data-page="streams">Streams <span class="coming-soon">soon</span></a>
                 <a href="#moderation" data-page="moderation">Moderation <span class="coming-soon">soon</span></a>
             </nav>
@@ -126,10 +185,40 @@
                     </div>
                 </div>
 
-                <!-- Coming soon pages -->
+                <!-- Users page -->
                 <div id="page-users" class="hidden">
-                    <div class="coming-soon-page">Users management &mdash; coming in SPEC-030</div>
+                    <div class="users-toolbar">
+                        <input type="text" id="users-search" placeholder="Search by email..." />
+                        <select id="users-role-filter">
+                            <option value="">All Roles</option>
+                            <option value="viewer">Viewer</option>
+                            <option value="broadcaster">Broadcaster</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                        <select id="users-suspended-filter">
+                            <option value="">All Status</option>
+                            <option value="false">Active</option>
+                            <option value="true">Suspended</option>
+                        </select>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Role</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-table-body">
+                            <tr class="empty-row"><td colspan="5">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                    <div class="pagination" id="users-pagination"></div>
                 </div>
+
+                <!-- Coming soon pages -->
                 <div id="page-streams" class="hidden">
                     <div class="coming-soon-page">Streams management &mdash; coming in SPEC-031</div>
                 </div>
@@ -146,6 +235,11 @@
         var API_BASE = '';
         var token = localStorage.getItem('admin_token');
         var refreshTimer = null;
+
+        // Users page state
+        var usersPage = 1;
+        var usersPerPage = 20;
+        var usersSearchTimer = null;
 
         var loginScreen = document.getElementById('login-screen');
         var appShell = document.getElementById('app-shell');
@@ -182,6 +276,15 @@
             showLogin();
         }
 
+        function handleApiError(resp) {
+            if (resp.status === 401) { logout(); throw new Error('unauthorized'); }
+            if (resp.status === 403) {
+                logout();
+                loginError.textContent = 'Access denied';
+                throw new Error('forbidden');
+            }
+        }
+
         function startRefresh() {
             stopRefresh();
             refreshTimer = setInterval(fetchDashboard, 30000);
@@ -207,19 +310,14 @@
             return days + 'd ago';
         }
 
+        // ── Dashboard ──────────────────────────────────────────
+
         function fetchDashboard() {
             fetch(API_BASE + '/v1/admin/dashboard', {
                 headers: { 'Authorization': 'Bearer ' + token }
             })
             .then(function (resp) {
-                if (resp.status === 401) { logout(); throw new Error('unauthorized'); }
-                if (resp.status === 403) {
-                    localStorage.removeItem('admin_token');
-                    token = null;
-                    showLogin();
-                    loginError.textContent = 'You are not an admin';
-                    throw new Error('forbidden');
-                }
+                handleApiError(resp);
                 if (!resp.ok) throw new Error('API error ' + resp.status);
                 return resp.json();
             })
@@ -291,6 +389,305 @@
             });
         }
 
+        // ── Users ──────────────────────────────────────────────
+
+        function fetchUsers() {
+            var q = document.getElementById('users-search').value.trim();
+            var role = document.getElementById('users-role-filter').value;
+            var suspended = document.getElementById('users-suspended-filter').value;
+
+            var params = new URLSearchParams();
+            params.set('page', usersPage);
+            params.set('per_page', usersPerPage);
+            if (q) params.set('q', q);
+            if (role) params.set('role', role);
+            if (suspended) params.set('suspended', suspended);
+
+            fetch(API_BASE + '/v1/admin/users?' + params.toString(), {
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(function (resp) {
+                handleApiError(resp);
+                if (!resp.ok) throw new Error('API error ' + resp.status);
+                return resp.json();
+            })
+            .then(function (json) {
+                renderUsers(json.data);
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    console.error('Users fetch failed:', err);
+                }
+            });
+        }
+
+        function renderUsers(data) {
+            var tbody = document.getElementById('users-table-body');
+            tbody.innerHTML = '';
+
+            if (data.users.length === 0) {
+                var tr = document.createElement('tr');
+                tr.className = 'empty-row';
+                var td = document.createElement('td');
+                td.setAttribute('colspan', '5');
+                td.textContent = 'No users found';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                renderPagination(data.total, data.page, data.per_page);
+                return;
+            }
+
+            data.users.forEach(function (u) {
+                var tr = document.createElement('tr');
+
+                var tdEmail = document.createElement('td');
+                tdEmail.textContent = u.email;
+                tr.appendChild(tdEmail);
+
+                // Role cell with inline change
+                var tdRole = document.createElement('td');
+                var roleSelect = document.createElement('select');
+                roleSelect.className = 'role-select';
+                ['viewer', 'broadcaster', 'admin'].forEach(function (r) {
+                    var opt = document.createElement('option');
+                    opt.value = r;
+                    opt.textContent = r;
+                    if (u.role === r) opt.selected = true;
+                    roleSelect.appendChild(opt);
+                });
+                roleSelect.addEventListener('change', function () {
+                    changeRole(u.id, this.value, this);
+                });
+                tdRole.appendChild(roleSelect);
+                tr.appendChild(tdRole);
+
+                // Status cell
+                var tdStatus = document.createElement('td');
+                if (!u.is_suspended) {
+                    var span = document.createElement('span');
+                    span.className = 'status-active';
+                    span.textContent = 'Active';
+                    tdStatus.appendChild(span);
+                } else if (u.suspended_until) {
+                    var span = document.createElement('span');
+                    span.className = 'status-suspended';
+                    span.textContent = 'Suspended until ' + new Date(u.suspended_until).toLocaleString();
+                    tdStatus.appendChild(span);
+                } else {
+                    var span = document.createElement('span');
+                    span.className = 'status-suspended';
+                    span.textContent = 'Permanently suspended';
+                    tdStatus.appendChild(span);
+                }
+                if (u.suspension_reason) {
+                    var reason = document.createElement('div');
+                    reason.style.fontSize = '11px';
+                    reason.style.color = '#888';
+                    reason.textContent = u.suspension_reason;
+                    tdStatus.appendChild(reason);
+                }
+                tr.appendChild(tdStatus);
+
+                var tdCreated = document.createElement('td');
+                tdCreated.textContent = relativeTime(u.created_at);
+                tr.appendChild(tdCreated);
+
+                // Actions
+                var tdActions = document.createElement('td');
+                if (u.is_suspended) {
+                    var unsuspendBtn = document.createElement('button');
+                    unsuspendBtn.className = 'action-btn success';
+                    unsuspendBtn.textContent = 'Unsuspend';
+                    unsuspendBtn.addEventListener('click', function () { unsuspendUser(u.id); });
+                    tdActions.appendChild(unsuspendBtn);
+                } else {
+                    var suspendBtn = document.createElement('button');
+                    suspendBtn.className = 'action-btn danger';
+                    suspendBtn.textContent = 'Suspend';
+                    suspendBtn.addEventListener('click', function () { showSuspendModal(u.id, u.email); });
+                    tdActions.appendChild(suspendBtn);
+                }
+                tr.appendChild(tdActions);
+
+                tbody.appendChild(tr);
+            });
+
+            renderPagination(data.total, data.page, data.per_page);
+        }
+
+        function renderPagination(total, page, perPage) {
+            var container = document.getElementById('users-pagination');
+            container.innerHTML = '';
+            var totalPages = Math.ceil(total / perPage) || 1;
+
+            var prevBtn = document.createElement('button');
+            prevBtn.textContent = 'Prev';
+            prevBtn.disabled = page <= 1;
+            prevBtn.addEventListener('click', function () { usersPage = page - 1; fetchUsers(); });
+            container.appendChild(prevBtn);
+
+            var info = document.createElement('span');
+            info.textContent = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' users)';
+            container.appendChild(info);
+
+            var nextBtn = document.createElement('button');
+            nextBtn.textContent = 'Next';
+            nextBtn.disabled = page >= totalPages;
+            nextBtn.addEventListener('click', function () { usersPage = page + 1; fetchUsers(); });
+            container.appendChild(nextBtn);
+        }
+
+        function changeRole(userId, newRole, selectEl) {
+            fetch(API_BASE + '/v1/admin/users/' + userId + '/role', {
+                method: 'PATCH',
+                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role: newRole })
+            })
+            .then(function (resp) {
+                handleApiError(resp);
+                if (!resp.ok) return resp.json().then(function (j) {
+                    throw new Error(j.error && j.error.message || 'Failed');
+                });
+                return resp.json();
+            })
+            .then(function () {
+                fetchUsers();
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    alert('Failed to change role: ' + err.message);
+                    fetchUsers();
+                }
+            });
+        }
+
+        function showSuspendModal(userId, email) {
+            var overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+
+            var modal = document.createElement('div');
+            modal.className = 'modal';
+
+            var h3 = document.createElement('h3');
+            h3.textContent = 'Suspend User';
+            modal.appendChild(h3);
+
+            var emailLabel = document.createElement('div');
+            emailLabel.style.marginBottom = '12px';
+            emailLabel.style.color = '#aaa';
+            emailLabel.textContent = email;
+            modal.appendChild(emailLabel);
+
+            var durLabel = document.createElement('label');
+            durLabel.textContent = 'Duration';
+            modal.appendChild(durLabel);
+            var durSelect = document.createElement('select');
+            [
+                { v: '600', t: '10 minutes' },
+                { v: '3600', t: '1 hour' },
+                { v: '86400', t: '1 day' },
+                { v: '604800', t: '7 days' },
+                { v: '', t: 'Permanent' }
+            ].forEach(function (o) {
+                var opt = document.createElement('option');
+                opt.value = o.v;
+                opt.textContent = o.t;
+                durSelect.appendChild(opt);
+            });
+            modal.appendChild(durSelect);
+
+            var reasonLabel = document.createElement('label');
+            reasonLabel.textContent = 'Reason (optional)';
+            modal.appendChild(reasonLabel);
+            var reasonInput = document.createElement('textarea');
+            reasonInput.placeholder = 'e.g. spam in chat';
+            modal.appendChild(reasonInput);
+
+            var actions = document.createElement('div');
+            actions.className = 'modal-actions';
+
+            var cancelBtn = document.createElement('button');
+            cancelBtn.className = 'btn-cancel';
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.addEventListener('click', function () { document.body.removeChild(overlay); });
+            actions.appendChild(cancelBtn);
+
+            var confirmBtn = document.createElement('button');
+            confirmBtn.className = 'btn-confirm';
+            confirmBtn.textContent = 'Suspend';
+            confirmBtn.addEventListener('click', function () {
+                var body = {};
+                var durVal = durSelect.value;
+                if (durVal) body.duration_secs = parseInt(durVal, 10);
+                else body.duration_secs = null;
+                var reason = reasonInput.value.trim();
+                if (reason) body.reason = reason;
+                confirmBtn.disabled = true;
+
+                fetch(API_BASE + '/v1/admin/users/' + userId + '/suspend', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                })
+                .then(function (resp) {
+                    handleApiError(resp);
+                    if (!resp.ok) return resp.json().then(function (j) {
+                        throw new Error(j.error && j.error.message || 'Failed');
+                    });
+                    return resp.json();
+                })
+                .then(function () {
+                    document.body.removeChild(overlay);
+                    fetchUsers();
+                })
+                .catch(function (err) {
+                    if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                        alert('Failed to suspend: ' + err.message);
+                    }
+                    confirmBtn.disabled = false;
+                });
+            });
+            actions.appendChild(confirmBtn);
+
+            modal.appendChild(actions);
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+        }
+
+        function unsuspendUser(userId) {
+            fetch(API_BASE + '/v1/admin/users/' + userId + '/suspend', {
+                method: 'DELETE',
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(function (resp) {
+                handleApiError(resp);
+                if (!resp.ok) return resp.json().then(function (j) {
+                    throw new Error(j.error && j.error.message || 'Failed');
+                });
+                return resp.json();
+            })
+            .then(function () {
+                fetchUsers();
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    alert('Failed to unsuspend: ' + err.message);
+                }
+            });
+        }
+
+        // Users search / filter events
+        document.getElementById('users-search').addEventListener('input', function () {
+            clearTimeout(usersSearchTimer);
+            usersSearchTimer = setTimeout(function () { usersPage = 1; fetchUsers(); }, 300);
+        });
+        document.getElementById('users-role-filter').addEventListener('change', function () {
+            usersPage = 1; fetchUsers();
+        });
+        document.getElementById('users-suspended-filter').addEventListener('change', function () {
+            usersPage = 1; fetchUsers();
+        });
+
         // Login form
         loginForm.addEventListener('submit', function (e) {
             e.preventDefault();
@@ -335,6 +732,7 @@
                 ['dashboard', 'users', 'streams', 'moderation'].forEach(function (p) {
                     document.getElementById('page-' + p).classList.toggle('hidden', p !== page);
                 });
+                if (page === 'users') fetchUsers();
             });
         });
 

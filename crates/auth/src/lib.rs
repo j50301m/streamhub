@@ -2,6 +2,7 @@
 //! opaque stream tokens used by broadcasters when pushing to MediaMTX.
 #![warn(missing_docs)]
 
+pub mod access_state;
 pub mod jwt;
 pub mod password;
 pub mod token;

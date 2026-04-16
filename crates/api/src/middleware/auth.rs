@@ -1,4 +1,5 @@
 use crate::state::AppState;
+use auth::access_state::AccessState;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use entity::user;
@@ -9,7 +10,7 @@ use uuid::Uuid;
 ///
 /// Use as a handler parameter to require authentication; extraction fails with
 /// `AppError::Unauthorized` when the token is missing, malformed, expired, or
-/// the user no longer exists.
+/// the user no longer exists. Also rejects suspended users with 403.
 #[derive(Debug, Clone)]
 pub struct CurrentUser {
     /// User UUID.
@@ -51,6 +52,19 @@ impl FromRequestParts<AppState> for CurrentUser {
 
         if claims.typ != "access" {
             return Err(AppError::Unauthorized("TOKEN_INVALID".to_string()));
+        }
+
+        // Access-state check (Redis cache + DB fallback)
+        let access = auth::access_state::load_user_access_state(
+            state.cache.as_ref(),
+            state.uow.db(),
+            claims.sub,
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        if access == AccessState::Suspended {
+            return Err(AppError::Forbidden("ACCOUNT_SUSPENDED".to_string()));
         }
 
         let user_model = state

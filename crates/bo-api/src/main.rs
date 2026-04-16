@@ -4,7 +4,7 @@
 //! console on port 8800.
 
 use anyhow::Result;
-use cache::{CacheStore, RedisCacheStore};
+use cache::{CacheStore, PubSub, RedisCacheStore, RedisPubSub};
 use cfgloader_rs::FromEnv;
 use repo::UnitOfWork;
 use std::net::SocketAddr;
@@ -45,7 +45,8 @@ async fn main() -> Result<()> {
 
     let redis_cfg = deadpool_redis::Config::from_url(&config.redis_url);
     let redis_pool = redis_cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))?;
-    let cache: Arc<dyn CacheStore> = Arc::new(RedisCacheStore::new(redis_pool));
+    let cache: Arc<dyn CacheStore> = Arc::new(RedisCacheStore::new(redis_pool.clone()));
+    let pubsub: Arc<dyn PubSub> = Arc::new(RedisPubSub::new(redis_pool, config.redis_url.clone()));
 
     let addr = SocketAddr::new(config.host.parse()?, config.port);
 
@@ -54,6 +55,7 @@ async fn main() -> Result<()> {
     let app_state = state::BoAppState {
         uow: UnitOfWork::new(db),
         cache,
+        pubsub,
         config,
     };
 

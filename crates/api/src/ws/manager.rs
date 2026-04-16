@@ -32,6 +32,9 @@ pub struct WsManager {
     cached_live_streams: RwLock<Vec<LiveStreamData>>,
     /// Cached viewer counts per stream
     cached_viewer_counts: RwLock<HashMap<Uuid, u32>>,
+    /// User → connections mapping (for suspend disconnect).
+    /// Anonymous WS (no JWT) are not tracked here.
+    user_connections: RwLock<HashMap<Uuid, HashSet<Uuid>>>,
 }
 
 impl WsManager {
@@ -44,6 +47,7 @@ impl WsManager {
             chat_pubsub_active: RwLock::new(HashSet::new()),
             cached_live_streams: RwLock::new(Vec::new()),
             cached_viewer_counts: RwLock::new(HashMap::new()),
+            user_connections: RwLock::new(HashMap::new()),
         })
     }
 
@@ -51,6 +55,16 @@ impl WsManager {
     pub async fn add_connection(&self, conn_id: Uuid, tx: mpsc::UnboundedSender<Message>) {
         let conn = WsConnection { tx };
         self.connections.write().await.insert(conn_id, conn);
+    }
+
+    /// Track an authenticated user's connection for suspend-disconnect.
+    pub async fn track_user_connection(&self, user_id: Uuid, conn_id: Uuid) {
+        self.user_connections
+            .write()
+            .await
+            .entry(user_id)
+            .or_default()
+            .insert(conn_id);
     }
 
     /// Remove a WebSocket connection and clean up all its subscriptions.
@@ -69,6 +83,54 @@ impl WsManager {
             subscribers.remove(conn_id);
         }
         chat.retain(|_, v| !v.is_empty());
+        drop(chat);
+
+        // Clean up user_connections
+        let mut uc = self.user_connections.write().await;
+        for conn_ids in uc.values_mut() {
+            conn_ids.remove(conn_id);
+        }
+        uc.retain(|_, v| !v.is_empty());
+    }
+
+    /// Disconnect all WS connections belonging to a user (used for suspend).
+    /// Sends a `SessionTerminated` message before closing.
+    pub async fn disconnect_user(&self, user_id: &Uuid) {
+        let conn_ids: Vec<Uuid> = {
+            let uc = self.user_connections.read().await;
+            uc.get(user_id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect()
+        };
+
+        if conn_ids.is_empty() {
+            return;
+        }
+
+        let msg = ServerMessage::SessionTerminated {
+            reason: "ACCOUNT_SUSPENDED".to_string(),
+        };
+        let text = match serde_json::to_string(&msg) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+
+        let conns = self.connections.read().await;
+        for conn_id in &conn_ids {
+            if let Some(conn) = conns.get(conn_id) {
+                // Send session_terminated then close
+                let _ = conn.tx.send(Message::Text(text.clone().into()));
+                let _ = conn.tx.send(Message::Close(None));
+            }
+        }
+        drop(conns);
+
+        // Remove from user_connections
+        self.user_connections.write().await.remove(user_id);
+
+        tracing::info!(user_id = %user_id, count = conn_ids.len(), "Disconnected user WS connections");
     }
 
     /// Subscribe a connection to a chat room.

@@ -71,6 +71,12 @@ pub enum ServerMessage {
         /// Machine-readable reason.
         reason: ChatErrorReason,
     },
+    /// Session terminated — the user's account has been suspended and all
+    /// connections must close. Frontend should clear tokens and show a message.
+    SessionTerminated {
+        /// Machine-readable reason (e.g. `"ACCOUNT_SUSPENDED"`).
+        reason: String,
+    },
 }
 
 /// Reasons a `send_chat` may be rejected by the server.

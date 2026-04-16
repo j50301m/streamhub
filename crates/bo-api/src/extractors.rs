@@ -1,5 +1,6 @@
 //! Authentication extractors for bo-api handlers.
 
+use auth::access_state::AccessState;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use entity::user;
@@ -22,8 +23,7 @@ pub struct CurrentUser {
 }
 
 /// Extracts and validates an admin user from the JWT.
-/// Returns 403 if the caller is not an admin.
-#[allow(dead_code)]
+/// Returns 403 if the caller is not an admin or is suspended.
 pub struct AdminUser(pub CurrentUser);
 
 fn extract_bearer_token(parts: &Parts) -> Result<String, AppError> {
@@ -57,6 +57,19 @@ impl FromRequestParts<BoAppState> for CurrentUser {
 
         if claims.typ != "access" {
             return Err(AppError::Unauthorized("TOKEN_INVALID".to_string()));
+        }
+
+        // Access-state check (Redis cache + DB fallback)
+        let access = auth::access_state::load_user_access_state(
+            state.cache.as_ref(),
+            state.uow.db(),
+            claims.sub,
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        if access == AccessState::Suspended {
+            return Err(AppError::Forbidden("ACCOUNT_SUSPENDED".to_string()));
         }
 
         let user_model = state
