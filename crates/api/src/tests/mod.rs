@@ -42,6 +42,22 @@ pub(crate) fn test_config() -> AppConfig {
         redis_url: "redis://localhost:6379".to_string(),
         viewer_count_interval_secs: 10,
         mediamtx_instances_json: String::new(),
+        rate_limit_general_authed_limit: 120,
+        rate_limit_general_authed_window: 60,
+        rate_limit_general_unauthed_limit: 30,
+        rate_limit_general_unauthed_window: 60,
+        rate_limit_login_limit: 5,
+        rate_limit_login_window: 900,
+        rate_limit_register_limit: 5,
+        rate_limit_register_window: 900,
+        rate_limit_refresh_limit: 10,
+        rate_limit_refresh_window: 60,
+        rate_limit_stream_token_limit: 5,
+        rate_limit_stream_token_window: 60,
+        rate_limit_ws_limit: 10,
+        rate_limit_ws_window: 60,
+        rate_limit_chat_limit: 1,
+        rate_limit_chat_window: 1,
     }
 }
 

@@ -719,6 +719,19 @@ mod tests {
             pubsub: crate::tests::test_pubsub(),
             live_tasks: Default::default(),
             mtx_instances: vec![],
+            rate_limiter: Arc::new(rate_limit::InMemoryRateLimiter::new()),
+            chat_rate_limit_policy: rate_limit::RateLimitPolicy {
+                name: "chat".into(),
+                limit: 1,
+                window_secs: 1,
+                key_prefix: "ratelimit:chat".into(),
+            },
+            refresh_rate_limit_policy: rate_limit::RateLimitPolicy {
+                name: "refresh".into(),
+                limit: 10,
+                window_secs: 60,
+                key_prefix: "ratelimit:refresh".into(),
+            },
         }
     }
 

@@ -28,8 +28,32 @@ fn live_stream() -> stream::Model {
     }
 }
 
+fn test_rate_limiter() -> std::sync::Arc<dyn rate_limit::RateLimiter> {
+    std::sync::Arc::new(rate_limit::InMemoryRateLimiter::new())
+}
+
+fn test_chat_policy() -> rate_limit::RateLimitPolicy {
+    rate_limit::RateLimitPolicy {
+        name: "chat".into(),
+        limit: 1,
+        window_secs: 1,
+        key_prefix: "ratelimit:chat".into(),
+    }
+}
+
+fn test_refresh_policy() -> rate_limit::RateLimitPolicy {
+    rate_limit::RateLimitPolicy {
+        name: "refresh".into(),
+        limit: 10,
+        window_secs: 60,
+        key_prefix: "ratelimit:refresh".into(),
+    }
+}
+
 fn app(state: AppState) -> axum::Router {
-    routes::app_router().with_state(state)
+    let config = state.config.clone();
+    let limiter = state.rate_limiter.clone();
+    routes::app_router(limiter, &config).with_state(state)
 }
 
 #[tokio::test]
@@ -63,6 +87,9 @@ async fn recording_hook_saves_segment() {
         pubsub: super::test_pubsub(),
         live_tasks: Default::default(),
         mtx_instances: vec![],
+        rate_limiter: test_rate_limiter(),
+        chat_rate_limit_policy: test_chat_policy(),
+        refresh_rate_limit_policy: test_refresh_policy(),
     };
 
     let req = Request::builder()
@@ -98,6 +125,9 @@ async fn recording_hook_stream_not_found_returns_404() {
         pubsub: super::test_pubsub(),
         live_tasks: Default::default(),
         mtx_instances: vec![],
+        rate_limiter: test_rate_limiter(),
+        chat_rate_limit_policy: test_chat_policy(),
+        refresh_rate_limit_policy: test_refresh_policy(),
     };
 
     let req = Request::builder()

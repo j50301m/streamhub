@@ -2,6 +2,7 @@ use crate::state::AppState;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use entity::user;
 use error::AppError;
@@ -254,7 +255,7 @@ pub(crate) async fn login(
 pub(crate) async fn refresh(
     State(state): State<AppState>,
     AppJson(payload): AppJson<RefreshRequest>,
-) -> Result<Json<DataResponse<TokenResponse>>, AppError> {
+) -> Result<Response, AppError> {
     let claims = auth::jwt::verify_token(&payload.refresh_token, &state.config.jwt_secret)
         .map_err(|e| match e {
             auth::jwt::JwtError::Expired => {
@@ -269,26 +270,73 @@ pub(crate) async fn refresh(
         return Err(AppError::Unauthorized("REFRESH_TOKEN_INVALID".to_string()));
     }
 
-    // Verify user still exists
-    state
-        .uow
-        .user_repo()
-        .find_by_id(claims.sub)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("REFRESH_TOKEN_INVALID".to_string()))?;
+    let user_id = claims.sub.to_string();
+    match state
+        .rate_limiter
+        .check(&state.refresh_rate_limit_policy, &user_id)
+        .await
+    {
+        Some(result) => {
+            metrics::counter!(
+                "rate_limit_hits_total",
+                "endpoint" => state.refresh_rate_limit_policy.name.clone(),
+                "result" => if result.allowed { "allowed" } else { "rejected" }
+            )
+            .increment(1);
 
-    let access_token = auth::jwt::sign_access_token(claims.sub, &state.config.jwt_secret)
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let new_refresh = auth::jwt::sign_refresh_token(claims.sub, &state.config.jwt_secret)
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+            if !result.allowed {
+                return Ok(rate_limit::make_rate_limited_response(&result));
+            }
 
-    Ok(Json(DataResponse {
-        data: TokenResponse {
-            access_token,
-            refresh_token: new_refresh,
-            expires_in: auth::jwt::access_token_expires_in(),
-        },
-    }))
+            // Verify user still exists
+            state
+                .uow
+                .user_repo()
+                .find_by_id(claims.sub)
+                .await?
+                .ok_or_else(|| AppError::Unauthorized("REFRESH_TOKEN_INVALID".to_string()))?;
+
+            let access_token = auth::jwt::sign_access_token(claims.sub, &state.config.jwt_secret)
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            let new_refresh = auth::jwt::sign_refresh_token(claims.sub, &state.config.jwt_secret)
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+
+            let mut response = Json(DataResponse {
+                data: TokenResponse {
+                    access_token,
+                    refresh_token: new_refresh,
+                    expires_in: auth::jwt::access_token_expires_in(),
+                },
+            })
+            .into_response();
+            rate_limit::inject_rate_limit_headers(response.headers_mut(), &result);
+            Ok(response)
+        }
+        None => {
+            // Fail-open: Redis unavailable
+            // Verify user still exists
+            state
+                .uow
+                .user_repo()
+                .find_by_id(claims.sub)
+                .await?
+                .ok_or_else(|| AppError::Unauthorized("REFRESH_TOKEN_INVALID".to_string()))?;
+
+            let access_token = auth::jwt::sign_access_token(claims.sub, &state.config.jwt_secret)
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            let new_refresh = auth::jwt::sign_refresh_token(claims.sub, &state.config.jwt_secret)
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+
+            Ok(Json(DataResponse {
+                data: TokenResponse {
+                    access_token,
+                    refresh_token: new_refresh,
+                    expires_in: auth::jwt::access_token_expires_in(),
+                },
+            })
+            .into_response())
+        }
+    }
 }
 
 /// `POST /v1/auth/logout` — auth-gated no-op returning 204.

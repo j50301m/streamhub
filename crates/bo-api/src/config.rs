@@ -31,6 +31,14 @@ pub struct BoConfig {
     /// Comma-separated CORS allowed origins (`BO_API_CORS_ORIGINS`).
     #[env("BO_API_CORS_ORIGINS", default = "http://localhost:3000")]
     pub cors_origins: String,
+
+    // ── Rate Limiting ─────────────────────────────────────────────
+    /// General rate limit: max requests per window.
+    #[env("RATE_LIMIT_BO_GENERAL_LIMIT", default = "60")]
+    pub rate_limit_general_limit: u64,
+    /// General rate limit: window in seconds.
+    #[env("RATE_LIMIT_BO_GENERAL_WINDOW", default = "60")]
+    pub rate_limit_general_window: u64,
 }
 
 impl BoConfig {

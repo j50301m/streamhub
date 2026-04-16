@@ -6,6 +6,7 @@ use cache::{CacheStore, PubSub, RedisCacheStore, RedisPubSub};
 use cfgloader_rs::FromEnv;
 use metrics_exporter_prometheus::PrometheusHandle;
 use opentelemetry_otlp::WithExportConfig;
+use rate_limit::{RateLimitLayer, RateLimitMode, RateLimitPolicy, RedisRateLimiter};
 use repo::UnitOfWork;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -59,6 +60,40 @@ impl App {
 
         let viewer_count_interval = config.viewer_count_interval_secs;
 
+        // Create rate limiter before moving redis_pool into state
+        let rate_limiter: Arc<dyn rate_limit::RateLimiter> =
+            Arc::new(RedisRateLimiter::new(redis_pool.clone()));
+
+        let general_unauthed_policy = RateLimitPolicy {
+            name: "api_general_unauthed".into(),
+            limit: config.rate_limit_general_unauthed_limit,
+            window_secs: config.rate_limit_general_unauthed_window,
+            key_prefix: "ratelimit:api_general_unauthed".into(),
+        };
+
+        let general_authed_policy = RateLimitPolicy {
+            name: "api_general_authed".into(),
+            limit: config.rate_limit_general_authed_limit,
+            window_secs: config.rate_limit_general_authed_window,
+            key_prefix: "ratelimit:api_general_authed".into(),
+        };
+
+        let chat_rate_limit_policy = RateLimitPolicy {
+            name: "chat".into(),
+            limit: config.rate_limit_chat_limit,
+            window_secs: config.rate_limit_chat_window,
+            key_prefix: "ratelimit:chat".into(),
+        };
+
+        let refresh_rate_limit_policy = RateLimitPolicy {
+            name: "refresh".into(),
+            limit: config.rate_limit_refresh_limit,
+            window_secs: config.rate_limit_refresh_window,
+            key_prefix: "ratelimit:refresh".into(),
+        };
+
+        let app_router = routes::app_router(rate_limiter.clone(), &config);
+
         let state = AppState {
             uow: UnitOfWork::new(db),
             config,
@@ -69,6 +104,9 @@ impl App {
             pubsub,
             live_tasks: live_tasks.clone(),
             mtx_instances,
+            rate_limiter: rate_limiter.clone(),
+            chat_rate_limit_policy,
+            refresh_rate_limit_policy,
         };
 
         let shutdown_token = CancellationToken::new();
@@ -88,10 +126,29 @@ impl App {
         .await;
 
         let router = Router::new()
-            .merge(routes::app_router())
+            .merge(app_router)
             .layer(axum::Extension(ws_manager))
             .layer(axum::middleware::from_fn(
                 middleware::metrics::track_metrics,
+            ))
+            // General authed rate limit: only for requests with a resolved user_id
+            .layer(RateLimitLayer::new(
+                rate_limiter.clone(),
+                general_authed_policy,
+                RateLimitMode::UserIdOnly,
+            ))
+            // General unauthed rate limit: IP key, skips /internal/* and
+            // requests that already resolved to an authenticated user.
+            .layer(axum::middleware::from_fn_with_state(
+                (rate_limiter.clone(), general_unauthed_policy),
+                middleware::rate_limit::unauthed_rate_limit,
+            ))
+            // Inject user_id extension from JWT before either general rate
+            // limit runs, so authed requests do not consume the unauthed IP
+            // budget and can be keyed by user_id instead.
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                middleware::auth::inject_user_id_extension,
             ))
             .layer(CorsLayer::permissive())
             .layer(
@@ -111,9 +168,13 @@ impl App {
     pub async fn run(self) -> Result<()> {
         tracing::info!("Starting server on {}", self.addr);
         let listener = tokio::net::TcpListener::bind(self.addr).await?;
-        axum::serve(listener, self.router)
-            .with_graceful_shutdown(shutdown_signal())
-            .await?;
+        axum::serve(
+            listener,
+            self.router
+                .into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
         // Cancel health check task
         self.shutdown_token.cancel();
