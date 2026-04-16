@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
+use error::AppError;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -29,28 +30,58 @@ pub(crate) async fn ws_handler(
     State(state): State<AppState>,
     axum::Extension(ws_manager): axum::Extension<Arc<WsManager>>,
     Query(query): Query<WsQuery>,
-) -> impl IntoResponse {
-    let authed = resolve_user(&state, query.token.as_deref()).await;
+) -> Response {
+    let authed = match resolve_user(&state, query.token.as_deref()).await {
+        Ok(user) => user,
+        Err(e) => return e.into_response(),
+    };
     ws.on_upgrade(move |socket| handle_ws(socket, state, ws_manager, authed))
+        .into_response()
 }
 
-async fn resolve_user(state: &AppState, token: Option<&str>) -> Option<ChatUser> {
-    let token = token?;
-    let claims = auth::jwt::verify_token(token, &state.config.jwt_secret).ok()?;
+/// Resolves an authenticated user from an optional JWT token.
+///
+/// - `Ok(Some(user))` — valid token, active user
+/// - `Ok(None)` — no token provided (anonymous connection allowed)
+/// - `Err(AppError::Forbidden)` — token provided but user is suspended (reject upgrade)
+async fn resolve_user(state: &AppState, token: Option<&str>) -> Result<Option<ChatUser>, AppError> {
+    let Some(token) = token else {
+        return Ok(None);
+    };
+
+    let claims = match auth::jwt::verify_token(token, &state.config.jwt_secret) {
+        Ok(c) => c,
+        Err(_) => return Ok(None),
+    };
     if claims.typ != "access" {
-        return None;
+        return Ok(None);
     }
+
+    // Access-state check — reject suspended users from WS upgrade
+    let access = auth::access_state::load_user_access_state(
+        state.cache.as_ref(),
+        state.uow.db(),
+        claims.sub,
+    )
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    if access == auth::access_state::AccessState::Suspended {
+        return Err(AppError::Forbidden("ACCOUNT_SUSPENDED".to_string()));
+    }
+
     let model = state
         .uow
         .user_repo()
         .find_by_id(claims.sub)
         .await
-        .ok()
-        .flatten()?;
-    Some(ChatUser {
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .ok_or_else(|| AppError::Unauthorized("TOKEN_INVALID".to_string()))?;
+
+    Ok(Some(ChatUser {
         id: model.id,
         email: model.email,
-    })
+    }))
 }
 
 async fn handle_ws(
@@ -63,6 +94,11 @@ async fn handle_ws(
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
 
     ws_manager.add_connection(conn_id, tx).await;
+
+    // Track user_id → conn_id for suspend-disconnect
+    if let Some(ref user) = authed {
+        ws_manager.track_user_connection(user.id, conn_id).await;
+    }
 
     // Send initial live streams state
     let cached = ws_manager.get_cached_live_streams().await;

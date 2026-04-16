@@ -24,6 +24,10 @@ pub struct Model {
     #[serde(skip_serializing)]
     pub password_hash: String,
     pub role: UserRole,
+    #[serde(default)]
+    pub is_suspended: bool,
+    pub suspended_until: Option<ChronoDateTimeUtc>,
+    pub suspension_reason: Option<String>,
     pub created_at: ChronoDateTimeUtc,
 }
 

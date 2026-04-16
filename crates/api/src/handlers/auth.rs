@@ -155,6 +155,9 @@ pub(crate) async fn register(
         email: Set(email),
         password_hash: Set(password_hash),
         role: Set(payload.role),
+        is_suspended: Set(false),
+        suspended_until: Set(None),
+        suspension_reason: Set(None),
         created_at: Set(Utc::now()),
     };
     let model = txn.user_repo().create(active).await?;
@@ -198,6 +201,33 @@ pub(crate) async fn login(
 
     auth::password::verify_password(&payload.password, &model.password_hash)
         .map_err(|_| AppError::Unauthorized("INVALID_CREDENTIALS".to_string()))?;
+
+    // Suspended check with lazy expiration clearing
+    let model = if model.is_suspended {
+        if let Some(until) = model.suspended_until {
+            if Utc::now() >= until {
+                // Expired → lazy clear
+                state.uow.user_repo().clear_suspended(model.id).await?;
+                let key = mediamtx::keys::user_state(&model.id);
+                let _ = state.cache.set(&key, "active", Some(300)).await;
+                state
+                    .uow
+                    .user_repo()
+                    .find_by_id(model.id)
+                    .await?
+                    .ok_or_else(|| AppError::Internal("user disappeared".to_string()))?
+            } else {
+                return Err(AppError::Forbidden(format!(
+                    "Account suspended until {}",
+                    until.format("%Y-%m-%d %H:%M UTC")
+                )));
+            }
+        } else {
+            return Err(AppError::Forbidden("Account suspended".to_string()));
+        }
+    } else {
+        model
+    };
 
     let access_token = auth::jwt::sign_access_token(model.id, &state.config.jwt_secret)
         .map_err(|e| AppError::Internal(e.to_string()))?;

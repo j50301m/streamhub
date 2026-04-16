@@ -21,6 +21,9 @@ fn admin_user() -> user::Model {
         email: "admin@example.com".to_string(),
         password_hash: auth::password::hash_password("password123").unwrap(),
         role: user::UserRole::Admin,
+        is_suspended: false,
+        suspended_until: None,
+        suspension_reason: None,
         created_at: Utc::now(),
     }
 }
@@ -31,6 +34,9 @@ fn broadcaster_user() -> user::Model {
         email: "broadcaster@example.com".to_string(),
         password_hash: auth::password::hash_password("password123").unwrap(),
         role: user::UserRole::Broadcaster,
+        is_suspended: false,
+        suspended_until: None,
+        suspension_reason: None,
         created_at: Utc::now(),
     }
 }
@@ -50,12 +56,24 @@ fn app(state: BoAppState) -> axum::Router {
     routes::app_router().with_state(state)
 }
 
+fn test_state(db: sea_orm::DatabaseConnection) -> BoAppState {
+    BoAppState {
+        uow: UnitOfWork::new(db),
+        config: test_config(),
+        cache: Arc::new(cache::InMemoryCache::new()),
+        pubsub: Arc::new(cache::InMemoryPubSub::new()),
+    }
+}
+
 #[tokio::test]
 async fn admin_dashboard_returns_200_with_correct_shape() {
     let user = admin_user();
     let token = make_token(&user);
 
     let db = MockDatabase::new(DbBackend::Postgres)
+        // access_state check: find_by_id
+        .append_query_results([vec![user.clone()]])
+        // extractor: find_by_id
         .append_query_results([vec![user.clone()]])
         .append_query_results(count_result(2))
         .append_query_results(count_result(1))
@@ -65,11 +83,7 @@ async fn admin_dashboard_returns_200_with_correct_shape() {
         .append_query_results::<stream::Model, _, _>([vec![]])
         .into_connection();
 
-    let state = BoAppState {
-        uow: UnitOfWork::new(db),
-        config: test_config(),
-        cache: Arc::new(cache::InMemoryCache::new()),
-    };
+    let state = test_state(db);
 
     let req = Request::builder()
         .method("GET")
@@ -98,14 +112,13 @@ async fn admin_dashboard_returns_403_for_non_admin() {
     let token = make_token(&user);
 
     let db = MockDatabase::new(DbBackend::Postgres)
+        // access_state check: find_by_id
+        .append_query_results([vec![user.clone()]])
+        // extractor: find_by_id
         .append_query_results([vec![user.clone()]])
         .into_connection();
 
-    let state = BoAppState {
-        uow: UnitOfWork::new(db),
-        config: test_config(),
-        cache: Arc::new(cache::InMemoryCache::new()),
-    };
+    let state = test_state(db);
 
     let req = Request::builder()
         .method("GET")
@@ -122,11 +135,7 @@ async fn admin_dashboard_returns_403_for_non_admin() {
 async fn admin_dashboard_returns_401_without_token() {
     let db = MockDatabase::new(DbBackend::Postgres).into_connection();
 
-    let state = BoAppState {
-        uow: UnitOfWork::new(db),
-        config: test_config(),
-        cache: Arc::new(cache::InMemoryCache::new()),
-    };
+    let state = test_state(db);
 
     let req = Request::builder()
         .method("GET")

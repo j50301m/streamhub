@@ -17,6 +17,9 @@ fn broadcaster_user() -> user::Model {
         email: "broadcaster@example.com".to_string(),
         password_hash: String::new(),
         role: user::UserRole::Broadcaster,
+        is_suspended: false,
+        suspended_until: None,
+        suspension_reason: None,
         created_at: Utc::now(),
     }
 }
@@ -27,6 +30,9 @@ fn viewer_user() -> user::Model {
         email: "viewer@example.com".to_string(),
         password_hash: String::new(),
         role: user::UserRole::Viewer,
+        is_suspended: false,
+        suspended_until: None,
+        suspension_reason: None,
         created_at: Utc::now(),
     }
 }
@@ -62,8 +68,9 @@ async fn create_stream_success() {
     let user = broadcaster_user();
     let s = test_stream(user.id);
 
-    // Mock: auth middleware find_by_id, then txn create
+    // Mock: access_state find_by_id, auth middleware find_by_id, then txn create
     let db = MockDatabase::new(DbBackend::Postgres)
+        .append_query_results([vec![user.clone()]]) // access_state: find_by_id
         .append_query_results([vec![user.clone()]]) // auth: find_by_id
         .append_query_results([vec![s.clone()]]) // create stream
         .append_exec_results([MockExecResult {
@@ -103,8 +110,9 @@ async fn create_stream_success() {
 async fn create_stream_viewer_forbidden() {
     let user = viewer_user();
 
-    // Mock: auth middleware find_by_id
+    // Mock: access_state find_by_id, auth middleware find_by_id
     let db = MockDatabase::new(DbBackend::Postgres)
+        .append_query_results([vec![user.clone()]]) // access_state: find_by_id
         .append_query_results([vec![user.clone()]]) // auth: find_by_id
         .into_connection();
 

@@ -17,6 +17,9 @@ fn test_user() -> user::Model {
         email: "test@example.com".to_string(),
         password_hash: auth::password::hash_password("password123").unwrap(),
         role: user::UserRole::Broadcaster,
+        is_suspended: false,
+        suspended_until: None,
+        suspension_reason: None,
         created_at: Utc::now(),
     }
 }

@@ -80,6 +80,15 @@ pub fn viewer_count(stream_id: &Uuid) -> String {
     format!("stream:{stream_id}:viewer_count")
 }
 
+/// Key `user:state:{user_id}` — access-state cache. Value is `"active"` (EX 300)
+/// or `"suspended"` (no-expire for permanent, EX remaining for temporary).
+pub fn user_state(user_id: &Uuid) -> String {
+    format!("user:state:{user_id}")
+}
+
+/// Pub/sub channel for cross-instance user suspension notifications.
+pub const USER_SUSPENDED_CHANNEL: &str = "streamhub:user_suspended";
+
 /// Cluster-wide lock key for the viewer-count refresh task.
 pub const VIEWER_COUNT_LOCK: &str = "viewer_count_lock";
 

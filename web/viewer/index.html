@@ -150,7 +150,7 @@
         function detectUrls() {
             const loc = window.location;
             if (loc.protocol === 'http:' || loc.protocol === 'https:') {
-                document.getElementById('api-url').value = loc.origin + '/api';
+                document.getElementById('api-url').value = loc.origin;
             } else {
                 document.getElementById('api-url').value = 'http://localhost:8080';
             }
@@ -435,6 +435,9 @@
                         case 'chat_error':
                             chatHandleError(msg.reason);
                             break;
+                        case 'session_terminated':
+                            handleSessionTerminated(msg.reason);
+                            break;
                     }
                 } catch (err) {
                     // ignore parse errors
@@ -460,6 +463,17 @@
                     }
                 }, 3000);
             }
+        }
+
+        function handleSessionTerminated(reason) {
+            log('Session terminated: ' + reason);
+            if (ws) { ws.onclose = null; ws.close(); ws = null; }
+            clearTimeout(wsReconnectTimer);
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+            accessToken = null;
+            alert('Your account has been suspended. Please contact support.');
+            window.location.reload();
         }
 
         function wsSubscribe(streamId) {

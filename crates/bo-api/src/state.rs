@@ -1,6 +1,6 @@
 //! Shared application state for the back-office API.
 
-use cache::CacheStore;
+use cache::{CacheStore, PubSub};
 use repo::UnitOfWork;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::sync::Arc;
@@ -15,6 +15,8 @@ pub struct BoAppState {
     pub uow: UnitOfWork,
     /// Cache store (viewer counts, session state).
     pub cache: Arc<dyn CacheStore>,
+    /// Pub/sub for cross-instance event fan-out (user_suspended).
+    pub pubsub: Arc<dyn PubSub>,
     /// Parsed environment configuration.
     pub config: BoConfig,
 }

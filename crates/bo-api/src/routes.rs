@@ -1,5 +1,5 @@
 use axum::Router;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, patch, post};
 use serde_json::{Value, json};
 
 use crate::handlers;
@@ -15,4 +15,17 @@ pub fn app_router() -> Router<BoAppState> {
         .route("/v1/auth/login", post(handlers::auth::login))
         .route("/v1/auth/refresh", post(handlers::auth::refresh))
         .route("/v1/admin/dashboard", get(handlers::dashboard::dashboard))
+        .route("/v1/admin/users", get(handlers::users::list_users))
+        .route(
+            "/v1/admin/users/{id}/role",
+            patch(handlers::users::update_role),
+        )
+        .route(
+            "/v1/admin/users/{id}/suspend",
+            post(handlers::users::suspend),
+        )
+        .route(
+            "/v1/admin/users/{id}/suspend",
+            delete(handlers::users::unsuspend),
+        )
 }

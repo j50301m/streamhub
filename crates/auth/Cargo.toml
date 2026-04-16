@@ -13,3 +13,13 @@ chrono = { workspace = true }
 serde = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
+cache = { workspace = true }
+mediamtx = { workspace = true }
+entity = { workspace = true }
+sea-orm = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+sea-orm = { workspace = true, features = ["mock"] }
+tokio = { workspace = true, features = ["macros", "rt"] }

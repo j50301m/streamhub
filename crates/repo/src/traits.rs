@@ -2,6 +2,7 @@
 //! [`sea_orm::DatabaseConnection`] or a [`sea_orm::DatabaseTransaction`]) to
 //! a set of entity-specific operations.
 
+use chrono::{DateTime, Utc};
 use entity::{recording, stream, user};
 use sea_orm::ConnectionTrait;
 use uuid::Uuid;
@@ -134,6 +135,42 @@ impl<C: ConnectionTrait> UserRepoRef<'_, C> {
     /// Counts users with the given role.
     pub async fn count_by_role(&self, role: user::UserRole) -> Result<u64, RepoError> {
         crate::user::count_by_role(self.0, role).await
+    }
+
+    /// Lists users with optional search / filter / pagination.
+    pub async fn find_users_paginated(
+        &self,
+        page: u64,
+        per_page: u64,
+        q: Option<&str>,
+        role: Option<user::UserRole>,
+        suspended: Option<bool>,
+    ) -> Result<crate::user::UserPaginatedResult, RepoError> {
+        crate::user::find_users_paginated(self.0, page, per_page, q, role, suspended).await
+    }
+
+    /// Updates a user's role.
+    pub async fn update_role(
+        &self,
+        id: Uuid,
+        role: user::UserRole,
+    ) -> Result<user::Model, RepoError> {
+        crate::user::update_role(self.0, id, role).await
+    }
+
+    /// Sets a user as suspended.
+    pub async fn set_suspended(
+        &self,
+        id: Uuid,
+        until: Option<DateTime<Utc>>,
+        reason: Option<String>,
+    ) -> Result<user::Model, RepoError> {
+        crate::user::set_suspended(self.0, id, until, reason).await
+    }
+
+    /// Clears suspension fields.
+    pub async fn clear_suspended(&self, id: Uuid) -> Result<user::Model, RepoError> {
+        crate::user::clear_suspended(self.0, id).await
     }
 }
 
