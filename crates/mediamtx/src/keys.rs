@@ -94,3 +94,8 @@ pub const VIEWER_COUNT_LOCK: &str = "viewer_count_lock";
 
 /// Cluster-wide lock key for the MTX health-check task.
 pub const HEALTH_CHECK_LOCK: &str = "health_check_lock";
+
+/// Pub/sub channel for admin force-end stream events. bo-api publishes when
+/// an admin force-ends a live stream; api's redis_subscriber listens and
+/// runs the async cleanup lifecycle (end_session, cancel thumbnail, etc.).
+pub const ADMIN_FORCE_END_CHANNEL: &str = "streamhub:admin_force_end";

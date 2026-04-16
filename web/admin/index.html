@@ -141,8 +141,8 @@
             <nav class="sidebar">
                 <a href="#dashboard" class="active" data-page="dashboard">Dashboard</a>
                 <a href="#users" data-page="users">Users</a>
-                <a href="#streams" data-page="streams">Streams <span class="coming-soon">soon</span></a>
-                <a href="#moderation" data-page="moderation">Moderation <span class="coming-soon">soon</span></a>
+                <a href="#streams" data-page="streams">Streams</a>
+                <a href="#moderation" data-page="moderation">Moderation</a>
             </nav>
             <div class="content">
                 <!-- Dashboard page -->
@@ -218,12 +218,66 @@
                     <div class="pagination" id="users-pagination"></div>
                 </div>
 
-                <!-- Coming soon pages -->
+                <!-- Streams page -->
                 <div id="page-streams" class="hidden">
-                    <div class="coming-soon-page">Streams management &mdash; coming in SPEC-031</div>
+                    <div class="users-toolbar">
+                        <input type="text" id="streams-search" placeholder="Search by title or owner email..." />
+                        <select id="streams-status-filter">
+                            <option value="">All Status</option>
+                            <option value="live">Live</option>
+                            <option value="ended">Ended</option>
+                            <option value="pending">Pending</option>
+                            <option value="error">Error</option>
+                        </select>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Owner</th>
+                                <th>Status</th>
+                                <th>Started</th>
+                                <th>Viewers</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="streams-table-body">
+                            <tr class="empty-row"><td colspan="6">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                    <div class="pagination" id="streams-pagination"></div>
                 </div>
+
+                <!-- Moderation page -->
                 <div id="page-moderation" class="hidden">
-                    <div class="coming-soon-page">Moderation panel &mdash; coming in SPEC-031</div>
+                    <div class="table-section" style="margin-bottom:32px">
+                        <h3>Banned Users (cross-stream, last 24h)</h3>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Stream</th>
+                                    <th>User</th>
+                                    <th>Type</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bans-table-body">
+                                <tr class="empty-row"><td colspan="4">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                        <div class="pagination" id="bans-pagination"></div>
+                    </div>
+                    <div class="table-section">
+                        <h3>Stream Chat Viewer</h3>
+                        <div class="users-toolbar" style="margin-bottom:12px">
+                            <select id="chat-stream-select" style="min-width:300px">
+                                <option value="">Select a stream...</option>
+                            </select>
+                        </div>
+                        <div id="chat-messages-container" style="max-height:400px;overflow-y:auto;background:#16213e;border:1px solid #333;border-radius:8px;padding:12px">
+                            <div style="color:#666;text-align:center;padding:24px">Select a stream to view chat</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -233,6 +287,7 @@
     <script>
     (function () {
         var API_BASE = '';
+        var API_URL = ''; // api (port 8080) for chat moderation write actions
         var token = localStorage.getItem('admin_token');
         var refreshTimer = null;
 
@@ -240,6 +295,15 @@
         var usersPage = 1;
         var usersPerPage = 20;
         var usersSearchTimer = null;
+
+        // Streams page state
+        var streamsPage = 1;
+        var streamsPerPage = 20;
+        var streamsSearchTimer = null;
+
+        // Moderation page state
+        var bansPage = 1;
+        var bansPerPage = 20;
 
         var loginScreen = document.getElementById('login-screen');
         var appShell = document.getElementById('app-shell');
@@ -255,6 +319,9 @@
             } else {
                 API_BASE = loc.protocol + '//' + loc.hostname + ':' + loc.port;
             }
+            // Both bo-api (/v1/admin/) and api (/v1/) go through the same
+            // nginx origin — path prefix determines which upstream handles it.
+            API_URL = API_BASE;
         }
 
         function showLogin() {
@@ -688,6 +755,593 @@
             usersPage = 1; fetchUsers();
         });
 
+        // ── Streams ────────────────────────────────────────────
+
+        function fetchStreams() {
+            var q = document.getElementById('streams-search').value.trim();
+            var status = document.getElementById('streams-status-filter').value;
+
+            var params = new URLSearchParams();
+            params.set('page', streamsPage);
+            params.set('per_page', streamsPerPage);
+            if (q) params.set('q', q);
+            if (status) params.set('status', status);
+
+            fetch(API_BASE + '/v1/admin/streams?' + params.toString(), {
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(function (resp) {
+                handleApiError(resp);
+                if (!resp.ok) throw new Error('API error ' + resp.status);
+                return resp.json();
+            })
+            .then(function (json) {
+                renderStreams(json.data);
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    console.error('Streams fetch failed:', err);
+                }
+            });
+        }
+
+        function renderStreams(data) {
+            var tbody = document.getElementById('streams-table-body');
+            tbody.innerHTML = '';
+
+            if (data.streams.length === 0) {
+                var tr = document.createElement('tr');
+                tr.className = 'empty-row';
+                var td = document.createElement('td');
+                td.setAttribute('colspan', '6');
+                td.textContent = 'No streams found';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                renderStreamsPagination(data.total, data.page, data.per_page);
+                return;
+            }
+
+            data.streams.forEach(function (s) {
+                var tr = document.createElement('tr');
+                tr.style.cursor = 'pointer';
+                tr.addEventListener('click', function () { showStreamDetail(s.id); });
+
+                var tdTitle = document.createElement('td');
+                tdTitle.textContent = s.title || '(untitled)';
+                tr.appendChild(tdTitle);
+
+                var tdOwner = document.createElement('td');
+                tdOwner.textContent = s.owner_email || '--';
+                tr.appendChild(tdOwner);
+
+                var tdStatus = document.createElement('td');
+                var statusSpan = document.createElement('span');
+                if (s.status === 'live') {
+                    statusSpan.style.color = '#4ecca3';
+                    statusSpan.textContent = 'Live';
+                } else if (s.status === 'ended') {
+                    statusSpan.style.color = '#aaa';
+                    statusSpan.textContent = 'Ended';
+                } else if (s.status === 'error') {
+                    statusSpan.style.color = '#e94560';
+                    statusSpan.textContent = 'Error';
+                } else {
+                    statusSpan.style.color = '#888';
+                    statusSpan.textContent = s.status;
+                }
+                tdStatus.appendChild(statusSpan);
+                tr.appendChild(tdStatus);
+
+                var tdStarted = document.createElement('td');
+                tdStarted.textContent = relativeTime(s.started_at);
+                tr.appendChild(tdStarted);
+
+                var tdViewers = document.createElement('td');
+                tdViewers.textContent = s.status === 'live' ? s.viewer_count : '--';
+                tr.appendChild(tdViewers);
+
+                var tdActions = document.createElement('td');
+                if (s.status === 'live') {
+                    var endBtn = document.createElement('button');
+                    endBtn.className = 'action-btn danger';
+                    endBtn.textContent = 'Force End';
+                    endBtn.addEventListener('click', function (e) {
+                        e.stopPropagation();
+                        showForceEndDialog(s.id, s.title);
+                    });
+                    tdActions.appendChild(endBtn);
+                }
+                tr.appendChild(tdActions);
+
+                tbody.appendChild(tr);
+            });
+
+            renderStreamsPagination(data.total, data.page, data.per_page);
+        }
+
+        function renderStreamsPagination(total, page, perPage) {
+            var container = document.getElementById('streams-pagination');
+            container.innerHTML = '';
+            var totalPages = Math.ceil(total / perPage) || 1;
+
+            var prevBtn = document.createElement('button');
+            prevBtn.textContent = 'Prev';
+            prevBtn.disabled = page <= 1;
+            prevBtn.addEventListener('click', function () { streamsPage = page - 1; fetchStreams(); });
+            container.appendChild(prevBtn);
+
+            var info = document.createElement('span');
+            info.textContent = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' streams)';
+            container.appendChild(info);
+
+            var nextBtn = document.createElement('button');
+            nextBtn.textContent = 'Next';
+            nextBtn.disabled = page >= totalPages;
+            nextBtn.addEventListener('click', function () { streamsPage = page + 1; fetchStreams(); });
+            container.appendChild(nextBtn);
+        }
+
+        function showStreamDetail(streamId) {
+            fetch(API_BASE + '/v1/admin/streams/' + streamId, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(function (resp) {
+                handleApiError(resp);
+                if (!resp.ok) throw new Error('API error ' + resp.status);
+                return resp.json();
+            })
+            .then(function (json) {
+                renderStreamDetailModal(json.data);
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    console.error('Stream detail fetch failed:', err);
+                }
+            });
+        }
+
+        function renderStreamDetailModal(d) {
+            var overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            overlay.addEventListener('click', function (e) {
+                if (e.target === overlay) document.body.removeChild(overlay);
+            });
+
+            var modal = document.createElement('div');
+            modal.className = 'modal';
+            modal.style.width = '500px';
+
+            var h3 = document.createElement('h3');
+            h3.textContent = d.title || '(untitled)';
+            modal.appendChild(h3);
+
+            var fields = [
+                ['ID', d.id],
+                ['Stream Key', d.stream_key],
+                ['Status', d.status],
+                ['VOD Status', d.vod_status],
+                ['Owner', d.owner_email || '--'],
+                ['Started', d.started_at ? new Date(d.started_at).toLocaleString() : '--'],
+                ['Ended', d.ended_at ? new Date(d.ended_at).toLocaleString() : '--'],
+                ['Viewers', d.viewer_count],
+                ['Chat Messages', d.chat_message_count],
+                ['Active Session', d.active_session || '--'],
+                ['MTX Instance', d.mtx_instance || '--']
+            ];
+
+            fields.forEach(function (f) {
+                var row = document.createElement('div');
+                row.style.display = 'flex';
+                row.style.justifyContent = 'space-between';
+                row.style.padding = '4px 0';
+                row.style.borderBottom = '1px solid #222';
+                row.style.fontSize = '13px';
+
+                var label = document.createElement('span');
+                label.style.color = '#aaa';
+                label.textContent = f[0];
+                row.appendChild(label);
+
+                var val = document.createElement('span');
+                val.textContent = f[1];
+                row.appendChild(val);
+
+                modal.appendChild(row);
+            });
+
+            var actions = document.createElement('div');
+            actions.className = 'modal-actions';
+            actions.style.marginTop = '16px';
+
+            if (d.status === 'live') {
+                var endBtn = document.createElement('button');
+                endBtn.className = 'btn-confirm';
+                endBtn.textContent = 'Force End';
+                endBtn.addEventListener('click', function () {
+                    document.body.removeChild(overlay);
+                    showForceEndDialog(d.id, d.title);
+                });
+                actions.appendChild(endBtn);
+            }
+
+            var closeBtn = document.createElement('button');
+            closeBtn.className = 'btn-cancel';
+            closeBtn.textContent = 'Close';
+            closeBtn.addEventListener('click', function () { document.body.removeChild(overlay); });
+            actions.appendChild(closeBtn);
+
+            modal.appendChild(actions);
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+        }
+
+        function showForceEndDialog(streamId, title) {
+            var overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+
+            var modal = document.createElement('div');
+            modal.className = 'modal';
+
+            var h3 = document.createElement('h3');
+            h3.textContent = 'Force End Stream';
+            modal.appendChild(h3);
+
+            var msg = document.createElement('div');
+            msg.style.marginBottom = '16px';
+            msg.style.color = '#aaa';
+            msg.textContent = 'Are you sure you want to force end "' + (title || 'untitled') + '"?';
+            modal.appendChild(msg);
+
+            var actions = document.createElement('div');
+            actions.className = 'modal-actions';
+
+            var cancelBtn = document.createElement('button');
+            cancelBtn.className = 'btn-cancel';
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.addEventListener('click', function () { document.body.removeChild(overlay); });
+            actions.appendChild(cancelBtn);
+
+            var confirmBtn = document.createElement('button');
+            confirmBtn.className = 'btn-confirm';
+            confirmBtn.textContent = 'Force End';
+            confirmBtn.addEventListener('click', function () {
+                confirmBtn.disabled = true;
+                fetch(API_BASE + '/v1/admin/streams/' + streamId + '/end', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                })
+                .then(function (resp) {
+                    handleApiError(resp);
+                    if (!resp.ok) return resp.json().then(function (j) {
+                        throw new Error(j.error && j.error.message || 'Failed');
+                    });
+                    return resp.json();
+                })
+                .then(function () {
+                    document.body.removeChild(overlay);
+                    fetchStreams();
+                })
+                .catch(function (err) {
+                    if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                        alert('Failed to force end: ' + err.message);
+                    }
+                    confirmBtn.disabled = false;
+                });
+            });
+            actions.appendChild(confirmBtn);
+
+            modal.appendChild(actions);
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+        }
+
+        // Streams search / filter events
+        document.getElementById('streams-search').addEventListener('input', function () {
+            clearTimeout(streamsSearchTimer);
+            streamsSearchTimer = setTimeout(function () { streamsPage = 1; fetchStreams(); }, 300);
+        });
+        document.getElementById('streams-status-filter').addEventListener('change', function () {
+            streamsPage = 1; fetchStreams();
+        });
+
+        // ── Moderation ─────────────────────────────────────────
+
+        function fetchBans() {
+            var params = new URLSearchParams();
+            params.set('page', bansPage);
+            params.set('per_page', bansPerPage);
+
+            fetch(API_BASE + '/v1/admin/moderation/bans?' + params.toString(), {
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(function (resp) {
+                handleApiError(resp);
+                if (!resp.ok) throw new Error('API error ' + resp.status);
+                return resp.json();
+            })
+            .then(function (json) {
+                renderBans(json.data);
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    console.error('Bans fetch failed:', err);
+                }
+            });
+        }
+
+        function renderBans(data) {
+            var tbody = document.getElementById('bans-table-body');
+            tbody.innerHTML = '';
+
+            if (data.bans.length === 0) {
+                var tr = document.createElement('tr');
+                tr.className = 'empty-row';
+                var td = document.createElement('td');
+                td.setAttribute('colspan', '4');
+                td.textContent = 'No banned users';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                renderBansPagination(data.total, data.page, data.per_page);
+                return;
+            }
+
+            data.bans.forEach(function (b) {
+                var tr = document.createElement('tr');
+
+                var tdStream = document.createElement('td');
+                tdStream.textContent = b.stream_title || b.stream_id;
+                tr.appendChild(tdStream);
+
+                var tdUser = document.createElement('td');
+                tdUser.textContent = b.user_email || b.user_id;
+                tr.appendChild(tdUser);
+
+                var tdType = document.createElement('td');
+                tdType.textContent = b.is_permanent ? 'Permanent' : 'Temporary';
+                tdType.style.color = b.is_permanent ? '#e94560' : '#aaa';
+                tr.appendChild(tdType);
+
+                var tdAction = document.createElement('td');
+                var unbanBtn = document.createElement('button');
+                unbanBtn.className = 'action-btn success';
+                unbanBtn.textContent = 'Unban';
+                unbanBtn.addEventListener('click', function () {
+                    unbanUser(b.stream_id, b.user_id);
+                });
+                tdAction.appendChild(unbanBtn);
+                tr.appendChild(tdAction);
+
+                tbody.appendChild(tr);
+            });
+
+            renderBansPagination(data.total, data.page, data.per_page);
+        }
+
+        function renderBansPagination(total, page, perPage) {
+            var container = document.getElementById('bans-pagination');
+            container.innerHTML = '';
+            var totalPages = Math.ceil(total / perPage) || 1;
+
+            var prevBtn = document.createElement('button');
+            prevBtn.textContent = 'Prev';
+            prevBtn.disabled = page <= 1;
+            prevBtn.addEventListener('click', function () { bansPage = page - 1; fetchBans(); });
+            container.appendChild(prevBtn);
+
+            var info = document.createElement('span');
+            info.textContent = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' bans)';
+            container.appendChild(info);
+
+            var nextBtn = document.createElement('button');
+            nextBtn.textContent = 'Next';
+            nextBtn.disabled = page >= totalPages;
+            nextBtn.addEventListener('click', function () { bansPage = page + 1; fetchBans(); });
+            container.appendChild(nextBtn);
+        }
+
+        function unbanUser(streamId, userId) {
+            // Unban via api (not bo-api) — chat moderation write
+            fetch(API_URL + '/v1/streams/' + streamId + '/chat/bans/' + userId, {
+                method: 'DELETE',
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(function (resp) {
+                handleApiError(resp);
+                if (!resp.ok) return resp.json().then(function (j) {
+                    throw new Error(j.error && j.error.message || 'Failed');
+                });
+                // 204 No Content — no body to parse
+                fetchBans();
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    alert('Failed to unban: ' + err.message);
+                }
+            });
+        }
+
+        function loadChatStreamSelect() {
+            // Load recent streams for the dropdown
+            fetch(API_BASE + '/v1/admin/streams?per_page=50&status=live', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(function (resp) {
+                handleApiError(resp);
+                if (!resp.ok) throw new Error('API error ' + resp.status);
+                return resp.json();
+            })
+            .then(function (json) {
+                var select = document.getElementById('chat-stream-select');
+                // Keep the first option
+                while (select.options.length > 1) select.remove(1);
+
+                json.data.streams.forEach(function (s) {
+                    var opt = document.createElement('option');
+                    opt.value = s.id;
+                    opt.textContent = (s.title || '(untitled)') + ' — ' + s.status;
+                    select.appendChild(opt);
+                });
+
+                // Also load recent ended streams
+                return fetch(API_BASE + '/v1/admin/streams?per_page=20&status=ended', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+            })
+            .then(function (resp) {
+                if (!resp.ok) return;
+                return resp.json();
+            })
+            .then(function (json) {
+                if (!json) return;
+                var select = document.getElementById('chat-stream-select');
+                json.data.streams.forEach(function (s) {
+                    var opt = document.createElement('option');
+                    opt.value = s.id;
+                    opt.textContent = (s.title || '(untitled)') + ' — ' + s.status;
+                    select.appendChild(opt);
+                });
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    console.error('Failed to load streams for chat select:', err);
+                }
+            });
+        }
+
+        document.getElementById('chat-stream-select').addEventListener('change', function () {
+            var streamId = this.value;
+            if (!streamId) {
+                document.getElementById('chat-messages-container').innerHTML =
+                    '<div style="color:#666;text-align:center;padding:24px">Select a stream to view chat</div>';
+                return;
+            }
+            fetchChatHistory(streamId);
+        });
+
+        function fetchChatHistory(streamId) {
+            fetch(API_BASE + '/v1/admin/moderation/streams/' + streamId + '/chat', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(function (resp) {
+                handleApiError(resp);
+                if (!resp.ok) throw new Error('API error ' + resp.status);
+                return resp.json();
+            })
+            .then(function (json) {
+                renderChatMessages(json.data.messages, streamId);
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    console.error('Chat history fetch failed:', err);
+                }
+            });
+        }
+
+        function renderChatMessages(messages, streamId) {
+            var container = document.getElementById('chat-messages-container');
+            container.innerHTML = '';
+
+            if (messages.length === 0) {
+                container.innerHTML = '<div style="color:#666;text-align:center;padding:24px">No messages</div>';
+                return;
+            }
+
+            messages.forEach(function (m) {
+                var row = document.createElement('div');
+                row.style.display = 'flex';
+                row.style.justifyContent = 'space-between';
+                row.style.alignItems = 'center';
+                row.style.padding = '6px 0';
+                row.style.borderBottom = '1px solid #222';
+
+                var left = document.createElement('div');
+                var name = document.createElement('span');
+                name.style.color = '#4ecca3';
+                name.style.fontWeight = 'bold';
+                name.style.marginRight = '8px';
+                name.style.fontSize = '13px';
+                name.textContent = m.display_name || m.user_id;
+                left.appendChild(name);
+
+                var content = document.createElement('span');
+                content.style.fontSize = '13px';
+                content.textContent = m.content;
+                left.appendChild(content);
+
+                row.appendChild(left);
+
+                var right = document.createElement('div');
+                right.style.flexShrink = '0';
+                right.style.marginLeft = '8px';
+
+                var delBtn = document.createElement('button');
+                delBtn.className = 'action-btn';
+                delBtn.textContent = 'Del';
+                delBtn.style.fontSize = '11px';
+                delBtn.addEventListener('click', function () {
+                    deleteChatMessage(streamId, m.id);
+                });
+                right.appendChild(delBtn);
+
+                var banBtn = document.createElement('button');
+                banBtn.className = 'action-btn danger';
+                banBtn.textContent = 'Ban';
+                banBtn.style.fontSize = '11px';
+                banBtn.addEventListener('click', function () {
+                    banChatUser(streamId, m.user_id);
+                });
+                right.appendChild(banBtn);
+
+                row.appendChild(right);
+                container.appendChild(row);
+            });
+        }
+
+        function deleteChatMessage(streamId, msgId) {
+            // Chat moderation write goes to api (not bo-api)
+            fetch(API_URL + '/v1/streams/' + streamId + '/chat/messages/' + msgId, {
+                method: 'DELETE',
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(function (resp) {
+                handleApiError(resp);
+                if (!resp.ok) return resp.json().then(function (j) {
+                    throw new Error(j.error && j.error.message || 'Failed');
+                });
+                // 204 No Content — no body to parse
+                fetchChatHistory(streamId);
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    alert('Failed to delete message: ' + err.message);
+                }
+            });
+        }
+
+        function banChatUser(streamId, userId) {
+            // Chat moderation write goes to api (not bo-api)
+            fetch(API_URL + '/v1/streams/' + streamId + '/chat/bans', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: userId })
+            })
+            .then(function (resp) {
+                handleApiError(resp);
+                if (!resp.ok) return resp.json().then(function (j) {
+                    throw new Error(j.error && j.error.message || 'Failed');
+                });
+                return resp.json();
+            })
+            .then(function () {
+                alert('User banned');
+            })
+            .catch(function (err) {
+                if (err.message !== 'unauthorized' && err.message !== 'forbidden') {
+                    alert('Failed to ban user: ' + err.message);
+                }
+            });
+        }
+
         // Login form
         loginForm.addEventListener('submit', function (e) {
             e.preventDefault();
@@ -733,6 +1387,8 @@
                     document.getElementById('page-' + p).classList.toggle('hidden', p !== page);
                 });
                 if (page === 'users') fetchUsers();
+                if (page === 'streams') fetchStreams();
+                if (page === 'moderation') { fetchBans(); loadChatStreamSelect(); }
             });
         });
 

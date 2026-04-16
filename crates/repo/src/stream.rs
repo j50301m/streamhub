@@ -1,13 +1,21 @@
 //! Stream entity queries. Callers usually go through [`crate::traits::StreamRepoRef`].
 
-use entity::stream;
+use entity::{stream, user};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect,
 };
 use uuid::Uuid;
 
 use crate::RepoError;
+
+/// A stream joined with its owner's email.
+pub struct StreamWithOwner {
+    /// The stream model.
+    pub stream: stream::Model,
+    /// Owner email from the users table, if the stream has a user_id.
+    pub owner_email: Option<String>,
+}
 
 /// Finds a stream by its UUID primary key.
 pub async fn find_by_id(
@@ -176,5 +184,77 @@ pub async fn delete(conn: &impl ConnectionTrait, id: Uuid) -> Result<(), RepoErr
         .exec(conn)
         .await
         .map(|_| ())
+        .map_err(RepoError::from)
+}
+
+/// Lists all streams with optional status filter and text search (title or
+/// owner email via ILIKE). Results are ordered by `created_at` descending.
+/// `page` is 1-indexed.
+///
+/// When `q` is provided, matching user IDs are resolved first so the stream
+/// query can filter on `user_id IN (...)` in addition to `title ILIKE`.
+pub async fn find_streams_paginated(
+    conn: &impl ConnectionTrait,
+    page: u64,
+    per_page: u64,
+    status: Option<stream::StreamStatus>,
+    q: Option<&str>,
+) -> Result<PaginatedResult, RepoError> {
+    let mut query = stream::Entity::find();
+
+    if let Some(status) = status {
+        query = query.filter(stream::Column::Status.eq(status));
+    }
+
+    if let Some(q) = q {
+        if !q.is_empty() {
+            let pattern = format!("%{q}%");
+            // Find user IDs matching the search term by email.
+            let matching_user_ids: Vec<Uuid> = user::Entity::find()
+                .filter(user::Column::Email.like(&pattern))
+                .select_only()
+                .column(user::Column::Id)
+                .into_tuple()
+                .all(conn)
+                .await?;
+
+            let mut cond = Condition::any().add(stream::Column::Title.like(&pattern));
+            if !matching_user_ids.is_empty() {
+                cond = cond.add(stream::Column::UserId.is_in(matching_user_ids));
+            }
+            query = query.filter(cond);
+        }
+    }
+
+    let total = query.clone().count(conn).await?;
+
+    let items = query
+        .order_by_desc(stream::Column::CreatedAt)
+        .paginate(conn, per_page)
+        .fetch_page(page - 1)
+        .await?;
+
+    Ok(PaginatedResult { items, total })
+}
+
+/// Returns streams that are currently live or ended within the last 24 hours.
+/// Used for cross-stream moderation ban aggregation.
+pub async fn find_recent_streams(
+    conn: &impl ConnectionTrait,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<stream::Model>, RepoError> {
+    stream::Entity::find()
+        .filter(
+            Condition::any()
+                .add(stream::Column::Status.eq(stream::StreamStatus::Live))
+                .add(
+                    Condition::all()
+                        .add(stream::Column::Status.eq(stream::StreamStatus::Ended))
+                        .add(stream::Column::EndedAt.gte(since)),
+                ),
+        )
+        .order_by_desc(stream::Column::CreatedAt)
+        .all(conn)
+        .await
         .map_err(RepoError::from)
 }

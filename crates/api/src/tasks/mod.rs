@@ -27,20 +27,23 @@ pub async fn spawn_all(
         health_check::spawn(
             cache.clone(),
             instances.clone(),
-            uow,
-            live_tasks,
+            uow.clone(),
+            live_tasks.clone(),
             shutdown.clone(),
         );
 
         viewer_count::spawn(
             cache.clone(),
             pubsub.clone(),
-            instances,
+            instances.clone(),
             ws_manager.clone(),
             viewer_count_interval,
             shutdown.clone(),
         );
     }
 
-    redis_subscriber::spawn(pubsub, ws_manager, shutdown).await;
+    redis_subscriber::spawn(
+        pubsub, ws_manager, cache, uow, live_tasks, instances, shutdown,
+    )
+    .await;
 }
