@@ -30,8 +30,11 @@ fn default_per_page() -> u64 {
 
 #[derive(Debug, Serialize)]
 pub struct BanEntry {
+    pub broadcaster_id: Uuid,
+    pub broadcaster_email: Option<String>,
+    /// A representative stream_id owned by this broadcaster, so the admin
+    /// frontend can call `DELETE /v1/streams/:stream_id/chat/bans/:user_id`.
     pub stream_id: Uuid,
-    pub stream_title: Option<String>,
     pub user_id: String,
     pub user_email: Option<String>,
     pub is_permanent: bool,
@@ -71,7 +74,8 @@ pub struct ChatData {
 
 // ── Handlers ───────────────────────────────────────────────────────
 
-/// `GET /v1/admin/moderation/bans` — cross-stream banned users from recent streams.
+/// `GET /v1/admin/moderation/bans` — per-broadcaster banned users aggregated
+/// from recent streams' owners.
 pub async fn list_bans(
     _admin: AdminUser,
     State(state): State<BoAppState>,
@@ -81,26 +85,48 @@ pub async fn list_bans(
     let page = query.page.max(1);
     let since = Utc::now() - Duration::hours(24);
 
-    // Get recent streams (live + ended within 24h)
+    // Get recent streams and extract distinct broadcaster (owner) IDs,
+    // keeping a representative stream_id per broadcaster for the unban URL.
     let recent_streams = state.uow.stream_repo().find_recent_streams(since).await?;
+    let mut broadcaster_stream: std::collections::HashMap<Uuid, Uuid> =
+        std::collections::HashMap::new();
+    for s in &recent_streams {
+        if let Some(uid) = s.user_id {
+            broadcaster_stream.entry(uid).or_insert(s.id);
+        }
+    }
+    let mut broadcaster_ids: Vec<Uuid> = broadcaster_stream.keys().copied().collect();
+    broadcaster_ids.sort();
 
-    // Aggregate bans from all recent streams
+    // Aggregate bans per-broadcaster
     let mut all_bans = Vec::new();
-    for stream in &recent_streams {
-        let ban_key = keys::chat_bans_set(&stream.id);
-        let members = state.cache.smembers(&ban_key).await.unwrap_or_default();
+    for broadcaster_id in &broadcaster_ids {
+        let bans_set_key = keys::chat_bans_set(broadcaster_id);
+        let members = state
+            .cache
+            .smembers(&bans_set_key)
+            .await
+            .unwrap_or_default();
+
+        let broadcaster_email = state
+            .uow
+            .user_repo()
+            .find_by_id(*broadcaster_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|u| u.email);
 
         for user_id_str in members {
             let Ok(uid) = user_id_str.parse::<Uuid>() else {
                 continue;
             };
 
-            let individual_key = keys::chat_ban(&stream.id, &uid);
+            let individual_key = keys::chat_ban(broadcaster_id, &uid);
             let ttl = state.cache.ttl(&individual_key).await.unwrap_or(-2);
 
             if ttl == -2 {
-                // Ban key expired — lazy cleanup: remove from the set
-                let _ = state.cache.srem(&ban_key, &user_id_str).await;
+                let _ = state.cache.srem(&bans_set_key, &user_id_str).await;
                 continue;
             }
 
@@ -116,14 +142,22 @@ pub async fn list_bans(
                 .map(|u| u.email);
 
             all_bans.push(BanEntry {
-                stream_id: stream.id,
-                stream_title: stream.title.clone(),
+                broadcaster_id: *broadcaster_id,
+                broadcaster_email: broadcaster_email.clone(),
+                stream_id: broadcaster_stream[broadcaster_id],
                 user_id: user_id_str,
                 user_email,
                 is_permanent,
             });
         }
     }
+
+    // Sort for stable pagination (broadcaster first, then user).
+    all_bans.sort_by(|a, b| {
+        a.broadcaster_id
+            .cmp(&b.broadcaster_id)
+            .then_with(|| a.user_id.cmp(&b.user_id))
+    });
 
     let total = all_bans.len() as u64;
     let start = ((page - 1) * per_page) as usize;

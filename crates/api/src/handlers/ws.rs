@@ -162,6 +162,7 @@ async fn handle_ws(
                                     let outcome = chat::handle_send_chat(
                                         state.cache.as_ref(),
                                         state.pubsub.as_ref(),
+                                        &state.uow,
                                         authed.as_ref(),
                                         stream_id,
                                         content,

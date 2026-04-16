@@ -65,6 +65,7 @@ pub enum SendChatOutcome {
 pub async fn handle_send_chat(
     cache: &dyn CacheStore,
     pubsub: &dyn PubSub,
+    uow: &repo::UnitOfWork,
     user: Option<&ChatUser>,
     stream_id: Uuid,
     content: String,
@@ -91,13 +92,50 @@ pub async fn handle_send_chat(
         }
     }
 
-    let ban_key = mediamtx::keys::chat_ban(&stream_id, &user.id);
-    match cache.get(&ban_key).await {
-        Ok(Some(_)) => return SendChatOutcome::Rejected(ChatErrorReason::Banned),
-        Ok(None) => {}
+    // Resolve stream owner for per-broadcaster ban check.
+    // Try Redis first, fallback to DB if missing or malformed.
+    let cached_owner = match cache.get(&mediamtx::keys::stream_owner(&stream_id)).await {
+        Ok(Some(s)) => Uuid::parse_str(&s).ok(),
+        Ok(None) => None,
         Err(e) => {
-            tracing::warn!(error = %e, "chat ban check failed");
+            tracing::warn!(error = %e, "stream owner lookup failed");
             return SendChatOutcome::Rejected(ChatErrorReason::Unknown);
+        }
+    };
+
+    let owner_id = match cached_owner {
+        Some(uid) => Some(uid),
+        None => {
+            // Redis miss or malformed — fallback to DB and rehydrate cache.
+            match uow.stream_repo().find_by_id(stream_id).await {
+                Ok(Some(stream)) => {
+                    if let Some(uid) = stream.user_id {
+                        let _ = cache
+                            .set(
+                                &mediamtx::keys::stream_owner(&stream_id),
+                                &uid.to_string(),
+                                None,
+                            )
+                            .await;
+                        Some(uid)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }
+    };
+
+    if let Some(owner_id) = owner_id {
+        let ban_key = mediamtx::keys::chat_ban(&owner_id, &user.id);
+        match cache.get(&ban_key).await {
+            Ok(Some(_)) => return SendChatOutcome::Rejected(ChatErrorReason::Banned),
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "chat ban check failed");
+                return SendChatOutcome::Rejected(ChatErrorReason::Unknown);
+            }
         }
     }
 
@@ -303,6 +341,11 @@ pub async fn ensure_chat_pubsub_task(
 mod tests {
     use super::*;
     use cache::{InMemoryCache, InMemoryPubSub};
+    use sea_orm::{DbBackend, MockDatabase};
+
+    fn mock_uow() -> repo::UnitOfWork {
+        repo::UnitOfWork::new(MockDatabase::new(DbBackend::Postgres).into_connection())
+    }
 
     fn user(id: Uuid, email: &str) -> ChatUser {
         ChatUser {
@@ -322,11 +365,30 @@ mod tests {
             .unwrap();
     }
 
+    async fn seed_stream_owner(cache: &InMemoryCache, stream_id: &Uuid, owner_id: &Uuid) {
+        cache
+            .set(
+                &mediamtx::keys::stream_owner(stream_id),
+                &owner_id.to_string(),
+                None,
+            )
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn rejects_when_unauthenticated() {
         let cache = InMemoryCache::new();
         let pubsub = InMemoryPubSub::new();
-        let out = handle_send_chat(&cache, &pubsub, None, Uuid::new_v4(), "hi".into()).await;
+        let out = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            None,
+            Uuid::new_v4(),
+            "hi".into(),
+        )
+        .await;
         assert!(matches!(
             out,
             SendChatOutcome::Rejected(ChatErrorReason::Unauthorized)
@@ -341,7 +403,8 @@ mod tests {
         seed_active_stream(&cache, &stream_id).await;
         let u = user(Uuid::new_v4(), "alice@example.com");
         let content = "a".repeat(501);
-        let out = handle_send_chat(&cache, &pubsub, Some(&u), stream_id, content).await;
+        let out =
+            handle_send_chat(&cache, &pubsub, &mock_uow(), Some(&u), stream_id, content).await;
         assert!(matches!(
             out,
             SendChatOutcome::Rejected(ChatErrorReason::TooLong)
@@ -355,7 +418,15 @@ mod tests {
         let stream_id = Uuid::new_v4();
         seed_active_stream(&cache, &stream_id).await;
         let u = user(Uuid::new_v4(), "alice@example.com");
-        let out = handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "   ".into()).await;
+        let out = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&u),
+            stream_id,
+            "   ".into(),
+        )
+        .await;
         assert!(matches!(
             out,
             SendChatOutcome::Rejected(ChatErrorReason::TooLong)
@@ -367,7 +438,15 @@ mod tests {
         let cache = InMemoryCache::new();
         let pubsub = InMemoryPubSub::new();
         let u = user(Uuid::new_v4(), "alice@example.com");
-        let out = handle_send_chat(&cache, &pubsub, Some(&u), Uuid::new_v4(), "hi".into()).await;
+        let out = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&u),
+            Uuid::new_v4(),
+            "hi".into(),
+        )
+        .await;
         assert!(matches!(
             out,
             SendChatOutcome::Rejected(ChatErrorReason::UnknownStream)
@@ -381,9 +460,25 @@ mod tests {
         let stream_id = Uuid::new_v4();
         seed_active_stream(&cache, &stream_id).await;
         let u = user(Uuid::new_v4(), "alice@example.com");
-        let a = handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "hi".into()).await;
+        let a = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&u),
+            stream_id,
+            "hi".into(),
+        )
+        .await;
         assert!(matches!(a, SendChatOutcome::Accepted));
-        let b = handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "hi again".into()).await;
+        let b = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&u),
+            stream_id,
+            "hi again".into(),
+        )
+        .await;
         assert!(matches!(
             b,
             SendChatOutcome::Rejected(ChatErrorReason::RateLimited)
@@ -397,7 +492,15 @@ mod tests {
         let stream_id = Uuid::new_v4();
         seed_active_stream(&cache, &stream_id).await;
         let u = user(Uuid::new_v4(), "alice@example.com");
-        let out = handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "hello".into()).await;
+        let out = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&u),
+            stream_id,
+            "hello".into(),
+        )
+        .await;
         assert!(matches!(out, SendChatOutcome::Accepted));
         let key = mediamtx::keys::chat_stream(&stream_id);
         let entries = cache.xrevrange(&key, 10).await.unwrap();
@@ -422,11 +525,21 @@ mod tests {
         let cache = InMemoryCache::new();
         let pubsub = InMemoryPubSub::new();
         let stream_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
         seed_active_stream(&cache, &stream_id).await;
+        seed_stream_owner(&cache, &stream_id, &owner_id).await;
         let u = user(Uuid::new_v4(), "banned@example.com");
-        let ban_key = mediamtx::keys::chat_ban(&stream_id, &u.id);
+        let ban_key = mediamtx::keys::chat_ban(&owner_id, &u.id);
         cache.set(&ban_key, "1", None).await.unwrap();
-        let out = handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "hi".into()).await;
+        let out = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&u),
+            stream_id,
+            "hi".into(),
+        )
+        .await;
         assert!(matches!(
             out,
             SendChatOutcome::Rejected(ChatErrorReason::Banned)
@@ -440,7 +553,15 @@ mod tests {
         let stream_id = Uuid::new_v4();
         seed_active_stream(&cache, &stream_id).await;
         let u = user(Uuid::new_v4(), "alice@example.com");
-        let out = handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "hello".into()).await;
+        let out = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&u),
+            stream_id,
+            "hello".into(),
+        )
+        .await;
         assert!(matches!(out, SendChatOutcome::Accepted));
 
         let key = mediamtx::keys::chat_stream(&stream_id);
@@ -462,7 +583,15 @@ mod tests {
         let stream_id = Uuid::new_v4();
         seed_active_stream(&cache, &stream_id).await;
         let u = user(Uuid::new_v4(), "alice@example.com");
-        handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "hi".into()).await;
+        handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&u),
+            stream_id,
+            "hi".into(),
+        )
+        .await;
 
         let key = mediamtx::keys::chat_stream(&stream_id);
         let entries = cache.xrevrange(&key, 10).await.unwrap();
@@ -486,7 +615,15 @@ mod tests {
         let stream_id = Uuid::new_v4();
         seed_active_stream(&cache, &stream_id).await;
         let u = user(Uuid::new_v4(), "alice@example.com");
-        handle_send_chat(&cache, &pubsub, Some(&u), stream_id, "del me".into()).await;
+        handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&u),
+            stream_id,
+            "del me".into(),
+        )
+        .await;
 
         let key = mediamtx::keys::chat_stream(&stream_id);
         let entries = cache.xrevrange(&key, 10).await.unwrap();
@@ -510,11 +647,11 @@ mod tests {
     #[tokio::test]
     async fn ban_and_unban_flow() {
         let cache = InMemoryCache::new();
-        let stream_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
         let target = Uuid::new_v4();
 
-        let ban_key = mediamtx::keys::chat_ban(&stream_id, &target);
-        let bans_set_key = mediamtx::keys::chat_bans_set(&stream_id);
+        let ban_key = mediamtx::keys::chat_ban(&owner_id, &target);
+        let bans_set_key = mediamtx::keys::chat_bans_set(&owner_id);
 
         cache.set(&ban_key, "1", Some(600)).await.unwrap();
         cache
@@ -540,13 +677,129 @@ mod tests {
     #[tokio::test]
     async fn permanent_ban_has_no_ttl() {
         let cache = InMemoryCache::new();
-        let stream_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
         let target = Uuid::new_v4();
 
-        let ban_key = mediamtx::keys::chat_ban(&stream_id, &target);
+        let ban_key = mediamtx::keys::chat_ban(&owner_id, &target);
         cache.set(&ban_key, "1", None).await.unwrap();
 
         let ttl = cache.ttl(&ban_key).await.unwrap();
         assert_eq!(ttl, -1);
+    }
+
+    /// Ban on stream A (owned by broadcaster X) persists when the same
+    /// broadcaster opens a new stream B — the per-broadcaster ban key is
+    /// independent of stream_id.
+    #[tokio::test]
+    async fn ban_persists_across_streams_of_same_broadcaster() {
+        let cache = InMemoryCache::new();
+        let pubsub = InMemoryPubSub::new();
+        let broadcaster = Uuid::new_v4();
+
+        // Stream A
+        let stream_a = Uuid::new_v4();
+        seed_active_stream(&cache, &stream_a).await;
+        seed_stream_owner(&cache, &stream_a, &broadcaster).await;
+
+        let banned = user(Uuid::new_v4(), "troll@example.com");
+        // Ban via broadcaster key (simulates what ban_user_handler does)
+        let ban_key = mediamtx::keys::chat_ban(&broadcaster, &banned.id);
+        cache.set(&ban_key, "1", None).await.unwrap();
+
+        // Banned on stream A
+        let out = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&banned),
+            stream_a,
+            "hi".into(),
+        )
+        .await;
+        assert!(matches!(
+            out,
+            SendChatOutcome::Rejected(ChatErrorReason::Banned)
+        ));
+
+        // Stream B (same broadcaster, new stream_id)
+        let stream_b = Uuid::new_v4();
+        seed_active_stream(&cache, &stream_b).await;
+        seed_stream_owner(&cache, &stream_b, &broadcaster).await;
+
+        // Clear rate-limit so the second call reaches the ban check
+        cache
+            .del(&mediamtx::keys::chat_ratelimit(&banned.id))
+            .await
+            .unwrap();
+
+        // Still banned on stream B
+        let out = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&banned),
+            stream_b,
+            "hi".into(),
+        )
+        .await;
+        assert!(matches!(
+            out,
+            SendChatOutcome::Rejected(ChatErrorReason::Banned)
+        ));
+    }
+
+    /// Bans from different broadcasters are independent.
+    #[tokio::test]
+    async fn ban_does_not_cross_broadcasters() {
+        let cache = InMemoryCache::new();
+        let pubsub = InMemoryPubSub::new();
+        let broadcaster_x = Uuid::new_v4();
+        let broadcaster_y = Uuid::new_v4();
+
+        let stream_x = Uuid::new_v4();
+        seed_active_stream(&cache, &stream_x).await;
+        seed_stream_owner(&cache, &stream_x, &broadcaster_x).await;
+
+        let stream_y = Uuid::new_v4();
+        seed_active_stream(&cache, &stream_y).await;
+        seed_stream_owner(&cache, &stream_y, &broadcaster_y).await;
+
+        let u = user(Uuid::new_v4(), "viewer@example.com");
+        // Banned only by broadcaster X
+        let ban_key = mediamtx::keys::chat_ban(&broadcaster_x, &u.id);
+        cache.set(&ban_key, "1", None).await.unwrap();
+
+        // Banned in broadcaster X's stream
+        let out = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&u),
+            stream_x,
+            "hi".into(),
+        )
+        .await;
+        assert!(matches!(
+            out,
+            SendChatOutcome::Rejected(ChatErrorReason::Banned)
+        ));
+
+        // Clear rate-limit so the second call reaches the ban check
+        cache
+            .del(&mediamtx::keys::chat_ratelimit(&u.id))
+            .await
+            .unwrap();
+
+        // Not banned in broadcaster Y's stream
+        let out = handle_send_chat(
+            &cache,
+            &pubsub,
+            &mock_uow(),
+            Some(&u),
+            stream_y,
+            "hi".into(),
+        )
+        .await;
+        assert!(matches!(out, SendChatOutcome::Accepted));
     }
 }
