@@ -1,6 +1,6 @@
+use crate::state::AppState;
 use axum::Json;
 use axum::extract::State;
-use common::AppState;
 use deadpool_redis::redis::cmd;
 use sea_orm::ConnectionTrait;
 use serde_json::{Value, json};

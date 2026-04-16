@@ -1,24 +1,30 @@
-use crate::state::AppState;
+//! Authentication extractors for bo-api handlers.
+
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use entity::user;
+use entity::user::UserRole;
 use error::AppError;
 use uuid::Uuid;
 
+use crate::state::BoAppState;
+
 /// Authenticated user resolved from a Bearer JWT access token.
-///
-/// Use as a handler parameter to require authentication; extraction fails with
-/// `AppError::Unauthorized` when the token is missing, malformed, expired, or
-/// the user no longer exists.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CurrentUser {
     /// User UUID.
     pub id: Uuid,
     /// User email (lowercase).
     pub email: String,
-    /// Role controlling authorization (broadcaster / viewer / admin).
+    /// Role controlling authorization.
     pub role: user::UserRole,
 }
+
+/// Extracts and validates an admin user from the JWT.
+/// Returns 403 if the caller is not an admin.
+#[allow(dead_code)]
+pub struct AdminUser(pub CurrentUser);
 
 fn extract_bearer_token(parts: &Parts) -> Result<String, AppError> {
     let header = parts
@@ -34,12 +40,12 @@ fn extract_bearer_token(parts: &Parts) -> Result<String, AppError> {
     Ok(token.to_string())
 }
 
-impl FromRequestParts<AppState> for CurrentUser {
+impl FromRequestParts<BoAppState> for CurrentUser {
     type Rejection = AppError;
 
     async fn from_request_parts(
         parts: &mut Parts,
-        state: &AppState,
+        state: &BoAppState,
     ) -> Result<Self, Self::Rejection> {
         let token = extract_bearer_token(parts)?;
 
@@ -66,5 +72,20 @@ impl FromRequestParts<AppState> for CurrentUser {
             email: user_model.email,
             role: user_model.role,
         })
+    }
+}
+
+impl FromRequestParts<BoAppState> for AdminUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &BoAppState,
+    ) -> Result<Self, Self::Rejection> {
+        let user = CurrentUser::from_request_parts(parts, state).await?;
+        if user.role != UserRole::Admin {
+            return Err(AppError::Forbidden("admin access required".into()));
+        }
+        Ok(AdminUser(user))
     }
 }

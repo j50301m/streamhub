@@ -1,9 +1,10 @@
+use crate::state::AppState;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::Utc;
-use common::{AppError, AppState};
 use entity::user;
+use error::AppError;
 use sea_orm::Set;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

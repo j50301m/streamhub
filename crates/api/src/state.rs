@@ -1,16 +1,7 @@
-//! Shared application types: config, error, and the [`AppState`] struct that
-//! wires the database, storage, cache, pubsub, metrics, and MediaMTX routing
-//! state into every HTTP handler.
-#![warn(missing_docs)]
+//! Shared application state and database initialisation.
 
-pub mod config;
-pub mod error;
-
-pub use cache::{CacheStore, InMemoryCache, InMemoryPubSub, PubSub, RedisCacheStore, RedisPubSub};
-pub use config::AppConfig;
-pub use error::AppError;
-pub use mediamtx::{MtxInstance, parse_mtx_instances};
-
+use cache::{CacheStore, PubSub};
+use mediamtx::MtxInstance;
 use metrics_exporter_prometheus::PrometheusHandle;
 use repo::UnitOfWork;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
@@ -20,6 +11,8 @@ use std::time::Duration;
 use storage::ObjectStorage;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+use crate::config::AppConfig;
 
 /// Shared application state cloned into every route handler.
 #[derive(Clone)]

@@ -1,29 +1,23 @@
 [package]
-name = "api"
+name = "bo-api"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "api"
+name = "bo-api"
 path = "src/main.rs"
 
 [dependencies]
 axum = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }
-tower-http = { workspace = true }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 sea-orm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-opentelemetry-otlp = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-metrics = { workspace = true }
-metrics-exporter-prometheus = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
@@ -34,13 +28,7 @@ mediamtx = { workspace = true }
 entity = { workspace = true }
 repo = { workspace = true }
 auth = { workspace = true }
-transcoder = { workspace = true }
-storage = { workspace = true }
 deadpool-redis = { workspace = true }
-reqwest = { workspace = true }
-base64 = "0.22"
-tokio-util = { workspace = true }
-tempfile = "3"
 
 [dev-dependencies]
 sea-orm = { workspace = true, features = ["mock"] }

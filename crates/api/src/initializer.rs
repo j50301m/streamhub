@@ -1,8 +1,9 @@
+use crate::config::AppConfig;
+use crate::state::AppState;
 use anyhow::Result;
 use axum::Router;
 use cache::{CacheStore, PubSub, RedisCacheStore, RedisPubSub};
 use cfgloader_rs::FromEnv;
-use common::{AppConfig, AppState};
 use metrics_exporter_prometheus::PrometheusHandle;
 use opentelemetry_otlp::WithExportConfig;
 use repo::UnitOfWork;
@@ -175,7 +176,7 @@ fn init_telemetry(otel_endpoint: &str) -> Result<PrometheusHandle> {
 
 async fn init_db(config: &AppConfig) -> Result<sea_orm::DatabaseConnection> {
     tracing::info!("Connecting to database...");
-    let db = common::init_db(&config.database_url).await?;
+    let db = crate::state::init_db(&config.database_url).await?;
 
     tracing::info!("Syncing database schema from entities...");
     db.get_schema_registry("entity::*").sync(&db).await?;

@@ -1,0 +1,12 @@
+[package]
+name = "error"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum = { workspace = true }
+sea-orm = { workspace = true }
+repo = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }

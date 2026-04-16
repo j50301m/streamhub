@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use common::AppState;
+use crate::state::AppState;
 
 use crate::handlers::chat::{self, ChatUser};
 use crate::ws::manager::WsManager;
