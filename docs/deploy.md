@@ -288,6 +288,7 @@ MediaMTX API port（`9997`）不對外開放，只在 docker network 內部供 A
 | `BO_API_HOST` | `0.0.0.0` | ✗ | bo-api bind 位址 |
 | `BO_API_PORT` | `8800` | ✗ | bo-api port |
 | `BO_API_CORS_ORIGINS` | `http://localhost:3000` | ✗ | 允許的 CORS origins |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | ✗ | OTLP/gRPC endpoint，container 內用 `http://tempo:4317`。service name 固定為 `streamhub-bo-api` |
 | `RATE_LIMIT_BO_GENERAL_LIMIT` | `60` | ✗ | bo-api 一般請求上限 |
 | `RATE_LIMIT_BO_GENERAL_WINDOW` | `60` | ✗ | bo-api 一般請求窗口（秒） |
 

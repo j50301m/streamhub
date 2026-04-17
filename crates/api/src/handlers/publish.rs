@@ -674,7 +674,7 @@ mod tests {
         super::super::super::tests::test_config()
     }
 
-    fn test_metrics() -> metrics_exporter_prometheus::PrometheusHandle {
+    fn test_metrics() -> telemetry::PrometheusHandle {
         super::super::super::tests::test_metrics()
     }
 

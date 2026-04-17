@@ -53,6 +53,7 @@ pub struct RecentLiveStream {
 }
 
 /// `GET /v1/admin/dashboard` — returns platform summary for the admin console.
+#[tracing::instrument(skip(state, _admin), fields(admin_id = %_admin.0.id))]
 pub async fn dashboard(
     _admin: AdminUser,
     State(state): State<BoAppState>,

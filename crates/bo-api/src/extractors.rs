@@ -24,6 +24,7 @@ pub struct CurrentUser {
 
 /// Extracts and validates an admin user from the JWT.
 /// Returns 403 if the caller is not an admin or is suspended.
+#[derive(Debug)]
 pub struct AdminUser(pub CurrentUser);
 
 fn extract_bearer_token(parts: &Parts) -> Result<String, AppError> {

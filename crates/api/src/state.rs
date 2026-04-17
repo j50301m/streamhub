@@ -2,13 +2,13 @@
 
 use cache::{CacheStore, PubSub};
 use mediamtx::MtxInstance;
-use metrics_exporter_prometheus::PrometheusHandle;
 use repo::UnitOfWork;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use storage::ObjectStorage;
+use telemetry::PrometheusHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 

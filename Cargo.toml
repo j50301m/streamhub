@@ -13,6 +13,7 @@ members = [
     "crates/storage",
     "crates/transcoder",
     "crates/rate-limit",
+    "crates/telemetry",
 ]
 
 [workspace.package]
@@ -83,3 +84,4 @@ auth = { path = "crates/auth" }
 storage = { path = "crates/storage" }
 transcoder = { path = "crates/transcoder" }
 rate-limit = { path = "crates/rate-limit" }
+telemetry = { path = "crates/telemetry" }

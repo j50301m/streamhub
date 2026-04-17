@@ -277,7 +277,7 @@ pub(crate) async fn refresh(
         .await
     {
         Some(result) => {
-            metrics::counter!(
+            telemetry::metrics_api::counter!(
                 "rate_limit_hits_total",
                 "endpoint" => state.refresh_rate_limit_policy.name.clone(),
                 "result" => if result.allowed { "allowed" } else { "rejected" }

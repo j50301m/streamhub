@@ -87,6 +87,15 @@ pub struct DataResponse<T: Serialize> {
 // ── Handlers ───────────────────────────────────────────────────────
 
 /// `GET /v1/admin/streams` — list streams with search / filter / pagination.
+#[tracing::instrument(
+    skip(state, _admin),
+    fields(
+        admin_id = %_admin.0.id,
+        page = query.page,
+        per_page = query.per_page,
+        status = ?query.status,
+    )
+)]
 pub async fn list_streams(
     _admin: AdminUser,
     State(state): State<BoAppState>,
@@ -149,6 +158,10 @@ pub async fn list_streams(
 }
 
 /// `GET /v1/admin/streams/:id` — stream detail with Redis enrichment.
+#[tracing::instrument(
+    skip(state, _admin),
+    fields(admin_id = %_admin.0.id, stream_id = %stream_id)
+)]
 pub async fn stream_detail(
     _admin: AdminUser,
     State(state): State<BoAppState>,
@@ -236,53 +249,20 @@ pub async fn stream_detail(
 ///
 /// Synchronous: updates DB status to Ended. Publishes an event for the api
 /// redis_subscriber to handle async cleanup (session keys, thumbnail, etc.).
+#[tracing::instrument(
+    skip(state, admin),
+    fields(admin_id = %admin.0.id, stream_id = %stream_id)
+)]
 pub async fn force_end(
     admin: AdminUser,
     State(state): State<BoAppState>,
     Path(stream_id): Path<Uuid>,
 ) -> Result<Json<DataResponse<StreamDetail>>, AppError> {
-    let stream = state
-        .uow
-        .stream_repo()
-        .find_by_id(stream_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
+    let stream = force_end_validate(&state, stream_id).await?;
+    let updated = force_end_mark_ended(&state, stream).await?;
+    force_end_invalidate_token(&state, stream_id).await;
+    force_end_pubsub(&state, stream_id, admin.0.id).await;
 
-    if stream.status != StreamStatus::Live {
-        return Err(AppError::Conflict("Stream is not live".to_string()));
-    }
-
-    // DB update: status = ended, ended_at = now
-    let mut active_model: entity::stream::ActiveModel = stream.into();
-    active_model.status = Set(StreamStatus::Ended);
-    active_model.ended_at = Set(Some(Utc::now()));
-    let updated = state.uow.stream_repo().update(active_model).await?;
-
-    // Block future `/token` issuance for this stream so the broadcaster
-    // frontend cannot auto-reconnect after the MTX session is kicked.
-    if let Err(e) = state
-        .cache
-        .set(&keys::stream_force_ended(&stream_id), "1", None)
-        .await
-    {
-        tracing::error!(error = %e, %stream_id, "Failed to persist force-end flag");
-    }
-
-    // Publish admin_force_end event for api's async cleanup
-    let event = serde_json::json!({
-        "stream_id": stream_id,
-        "requested_by": admin.0.id,
-        "requested_at": Utc::now().to_rfc3339(),
-    });
-    if let Err(e) = state
-        .pubsub
-        .publish(keys::ADMIN_FORCE_END_CHANNEL, &event.to_string())
-        .await
-    {
-        tracing::error!(error = %e, "Failed to publish admin_force_end event");
-    }
-
-    // Build response with Redis enrichment
     let owner_email = if let Some(uid) = updated.user_id {
         state
             .uow
@@ -315,4 +295,71 @@ pub async fn force_end(
             chat_message_count: 0,
         },
     }))
+}
+
+/// Loads the stream and ensures it is currently Live. Returns 404 if the
+/// stream is missing and 409 if it is not live (cannot force-end twice).
+#[tracing::instrument(skip(state), fields(stream_id = %stream_id))]
+async fn force_end_validate(
+    state: &BoAppState,
+    stream_id: Uuid,
+) -> Result<entity::stream::Model, AppError> {
+    let stream = state
+        .uow
+        .stream_repo()
+        .find_by_id(stream_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("STREAM_NOT_FOUND".to_string()))?;
+
+    if stream.status != StreamStatus::Live {
+        return Err(AppError::Conflict("Stream is not live".to_string()));
+    }
+    Ok(stream)
+}
+
+/// Moves the stream row to `status = Ended` and stamps `ended_at`. This is
+/// the only step that returns an error — the following cache / pubsub steps
+/// are best-effort and log on failure.
+#[tracing::instrument(skip(state, stream), fields(stream_id = %stream.id))]
+async fn force_end_mark_ended(
+    state: &BoAppState,
+    stream: entity::stream::Model,
+) -> Result<entity::stream::Model, AppError> {
+    let mut active_model: entity::stream::ActiveModel = stream.into();
+    active_model.status = Set(StreamStatus::Ended);
+    active_model.ended_at = Set(Some(Utc::now()));
+    Ok(state.uow.stream_repo().update(active_model).await?)
+}
+
+/// Persists the `stream:force_ended:{id}` flag so future `/token` requests
+/// are rejected — prevents the broadcaster frontend from auto-reconnecting
+/// after the MTX session is kicked async by the api redis_subscriber.
+#[tracing::instrument(skip(state), fields(stream_id = %stream_id))]
+async fn force_end_invalidate_token(state: &BoAppState, stream_id: Uuid) {
+    if let Err(e) = state
+        .cache
+        .set(&keys::stream_force_ended(&stream_id), "1", None)
+        .await
+    {
+        tracing::error!(error = %e, %stream_id, "Failed to persist force-end flag");
+    }
+}
+
+/// Publishes `admin_force_end` on the shared pub/sub channel; api instances
+/// consume it asynchronously to kick the MediaMTX publisher and clean up
+/// session keys. Failure is non-fatal but logged at error.
+#[tracing::instrument(skip(state), fields(stream_id = %stream_id, requested_by = %requested_by))]
+async fn force_end_pubsub(state: &BoAppState, stream_id: Uuid, requested_by: Uuid) {
+    let event = serde_json::json!({
+        "stream_id": stream_id,
+        "requested_by": requested_by,
+        "requested_at": Utc::now().to_rfc3339(),
+    });
+    if let Err(e) = state
+        .pubsub
+        .publish(keys::ADMIN_FORCE_END_CHANNEL, &event.to_string())
+        .await
+    {
+        tracing::error!(error = %e, "Failed to publish admin_force_end event");
+    }
 }

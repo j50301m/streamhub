@@ -32,7 +32,7 @@ pub async fn unauthed_rate_limit(
 
     match limiter.check(&policy, &ip).await {
         Some(result) => {
-            metrics::counter!(
+            telemetry::metrics_api::counter!(
                 "rate_limit_hits_total",
                 "endpoint" => policy.name.clone(),
                 "result" => if result.allowed { "allowed" } else { "rejected" }

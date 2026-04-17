@@ -9,6 +9,12 @@ async fn healthz() -> axum::Json<Value> {
     axum::Json(json!({"status": "ok"}))
 }
 
+/// Unauthed scrape sub-router — mounted outside JWT / rate-limit layers so
+/// Prometheus can poll without credentials.
+pub fn metrics_router() -> Router<BoAppState> {
+    Router::new().route("/metrics", get(handlers::metrics::metrics_handler))
+}
+
 pub fn app_router() -> Router<BoAppState> {
     Router::new()
         .route("/healthz", get(healthz))

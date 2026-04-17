@@ -147,6 +147,7 @@ crates/
 ├── storage/      # GCS / fake-gcs 上傳封裝（ObjectStorage trait：upload_file / upload_bytes / upload_dir）
 ├── transcoder/   # GCP Transcoder API + ffmpeg（local fallback、HLS thumbnail、MP4 concat）
 ├── rate-limit/   # Redis Lua script fixed window rate limiting（trait + middleware + IP extraction）
+├── telemetry/    # 共用 OTel + Prometheus + JSON log 初始化、base HTTP metrics middleware
 ├── error/        # AppError 共用錯誤型別（原 common crate）
 ├── entity/       # SeaORM dense format entity 定義
 └── migration/    # SeaORM migration
@@ -169,6 +170,13 @@ crates/
 - 聊天 moderation（bans 列表 / chat 歷史檢視）
 
 bo-api 與 api 是獨立 binary，不同 Dockerfile / compose / .env，prod 部署在不同 domain。
+
+**Observability**（與 api 同步於 SPEC-035）：
+
+- OpenTelemetry OTLP/gRPC traces → Tempo（`OTEL_EXPORTER_OTLP_ENDPOINT`，service name `streamhub-bo-api`）
+- Prometheus metrics：`GET /metrics`，無 JWT / rate-limit（Prometheus scrape endpoint）。base counter/histogram 由 `telemetry::base_http_metrics` 中介軟體產生
+- JSON logs 含 OTel `trace_id` 欄位 → Loki，可從 log 一鍵跳到 Tempo 看完整流程
+- 所有 admin handler 以及 `force_end` / `suspend` / `list_bans` 的關鍵子流程都加上 `#[tracing::instrument]`
 
 ### Cloud SQL PostgreSQL 17
 
@@ -739,6 +747,7 @@ Layer 1 葉子 crate（無 internal 依賴）
 ├── entity       SeaORM models
 ├── rate-limit   Redis Lua script fixed window rate limiting + Axum middleware
 ├── storage      ObjectStorage trait、GCS / fake-gcs
+├── telemetry    init_telemetry（OTel OTLP + Prometheus + JSON log）+ base_http_metrics middleware
 └── transcoder   GCP Transcoder API + local ffmpeg + HLS thumbnail
 
 Layer 2 組合 crate
@@ -747,8 +756,8 @@ Layer 2 組合 crate
 └── migration    → entity                     (seeds only)
 
 Layer 3 application crate
-├── api          → 以上所有                         (Axum handlers、routes、WS、tasks，port 8080)
-└── bo-api       → repo, cache, mediamtx, auth, error, rate-limit  (Admin handlers、routes，port 8800)
+├── api          → 以上所有                                    (Axum handlers、routes、WS、tasks，port 8080)
+└── bo-api       → repo, cache, mediamtx, auth, error, rate-limit, telemetry  (Admin handlers、routes，port 8800)
 ```
 
 ### 依賴圖
@@ -770,6 +779,6 @@ Layer 3 application crate
 ```
 
 **原則**：
-- `entity`、`auth`、`cache`、`storage`、`transcoder`、`rate-limit`、`error` 不依賴任何其他 internal crate（可獨立編譯/測試）
+- `entity`、`auth`、`cache`、`storage`、`transcoder`、`rate-limit`、`telemetry`、`error` 不依賴任何其他 internal crate（可獨立編譯/測試）
 - `api` 和 `bo-api` 是 Layer 3 application crate，各自組合底層服務
 - 循環依賴一律不允許
