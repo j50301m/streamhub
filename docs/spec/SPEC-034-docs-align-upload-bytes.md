@@ -1,6 +1,6 @@
 # SPEC-034 Docs 對齊 + ObjectStorage::upload_bytes
 
-狀態：in-progress
+狀態：done
 
 ## 目標
 
@@ -71,17 +71,17 @@ SPEC-029~033 改動大：
 
 ## 驗收標準
 
-- [ ] architecture.md 列出目前 workspace 的所有 crate（含 bo-api、rate-limit、error）
-- [ ] architecture.md 有 rate limit Redis key schema 和 middleware pipeline 描述
-- [ ] api.md 文件涵蓋所有 bo-api admin endpoints（dashboard / users list / role update / suspend / unsuspend / streams / moderation / bans）
-- [ ] api.md rate limit 表有 bo-api general + chat 行
-- [ ] deploy.md 有 bo-api port 8800 + bootstrap + compose + env vars
-- [ ] deploy.md 有 18 個 rate limit env vars 文件
-- [ ] ObjectStorage trait 有 `upload_bytes` 方法
-- [ ] thumbnail handler 不再使用 tempfile
-- [ ] thumbnail_url 格式不變（`streams/{stream_key}/live-thumb.jpg`）
-- [ ] 所有既有測試通過 + 新增測試通過
-- [ ] CI 全綠（cargo build / test / clippy / fmt）
+- [x] architecture.md 列出目前 workspace 的所有 crate（含 bo-api、rate-limit、error）
+- [x] architecture.md 有 rate limit Redis key schema 和 middleware pipeline 描述
+- [x] api.md 文件涵蓋所有 bo-api admin endpoints（dashboard / users list / role update / suspend / unsuspend / streams / moderation / bans）
+- [x] api.md rate limit 表有 bo-api general + chat 行
+- [x] deploy.md 有 bo-api port 8800 + bootstrap + compose + env vars
+- [x] deploy.md 有 18 個 rate limit env vars 文件
+- [x] ObjectStorage trait 有 `upload_bytes` 方法
+- [x] thumbnail handler 不再使用 tempfile
+- [x] thumbnail_url 格式不變（`streams/{stream_key}/live-thumb.jpg`）
+- [x] 所有既有測試通過 + 新增測試通過
+- [x] CI 全綠（cargo build / test / clippy / fmt）
 
 ## 備註
 

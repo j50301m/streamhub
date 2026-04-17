@@ -13,6 +13,15 @@ use uuid::Uuid;
 use crate::extractors::AdminUser;
 use crate::state::BoAppState;
 
+#[derive(Debug, Serialize, Deserialize)]
+struct AdminForceEndEvent {
+    stream_id: Uuid,
+    requested_by: Uuid,
+    requested_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    traceparent: Option<String>,
+}
+
 // ── Request / Response types ───────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -350,14 +359,22 @@ async fn force_end_invalidate_token(state: &BoAppState, stream_id: Uuid) {
 /// session keys. Failure is non-fatal but logged at error.
 #[tracing::instrument(skip(state), fields(stream_id = %stream_id, requested_by = %requested_by))]
 async fn force_end_pubsub(state: &BoAppState, stream_id: Uuid, requested_by: Uuid) {
-    let event = serde_json::json!({
-        "stream_id": stream_id,
-        "requested_by": requested_by,
-        "requested_at": Utc::now().to_rfc3339(),
-    });
+    let event = AdminForceEndEvent {
+        stream_id,
+        requested_by,
+        requested_at: Utc::now().to_rfc3339(),
+        traceparent: telemetry::inject_traceparent(),
+    };
+    let payload = match serde_json::to_string(&event) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::error!(%stream_id, error = %error, "Failed to serialize admin_force_end event");
+            return;
+        }
+    };
     if let Err(e) = state
         .pubsub
-        .publish(keys::ADMIN_FORCE_END_CHANNEL, &event.to_string())
+        .publish(keys::ADMIN_FORCE_END_CHANNEL, &payload)
         .await
     {
         tracing::error!(error = %e, "Failed to publish admin_force_end event");

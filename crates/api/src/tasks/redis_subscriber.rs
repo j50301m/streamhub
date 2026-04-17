@@ -4,6 +4,7 @@ use repo::UnitOfWork;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::ws::manager::WsManager;
@@ -69,11 +70,29 @@ pub async fn spawn(
                             #[derive(serde::Deserialize)]
                             struct UserSuspendedEvent {
                                 user_id: uuid::Uuid,
+                                #[serde(default)]
+                                traceparent: Option<String>,
                             }
                             match serde_json::from_str::<UserSuspendedEvent>(&payload) {
                                 Ok(event) => {
-                                    tracing::info!(user_id = %event.user_id, "Received user_suspended event, disconnecting WS");
-                                    ws_mgr2.disconnect_user(&event.user_id).await;
+                                    let ws_manager = ws_mgr2.clone();
+                                    let span = tracing::info_span!(
+                                        "user_suspended_subscriber",
+                                        user_id = %event.user_id
+                                    );
+                                    telemetry::set_parent_from_traceparent(
+                                        &span,
+                                        event.traceparent.as_deref(),
+                                    );
+                                    async move {
+                                        tracing::info!(
+                                            user_id = %event.user_id,
+                                            "Received user_suspended event, disconnecting WS"
+                                        );
+                                        ws_manager.disconnect_user(&event.user_id).await;
+                                    }
+                                    .instrument(span)
+                                    .await;
                                 }
                                 Err(e) => {
                                     tracing::warn!(error = %e, "Failed to parse user_suspended event");
@@ -116,19 +135,45 @@ pub async fn spawn(
                                 stream_id: Uuid,
                                 #[allow(dead_code)]
                                 requested_by: Uuid,
+                                #[serde(default)]
+                                traceparent: Option<String>,
                             }
                             match serde_json::from_str::<AdminForceEndEvent>(&payload) {
                                 Ok(event) => {
-                                    tracing::info!(stream_id = %event.stream_id, requested_by = %event.requested_by, "Received admin_force_end event");
-                                    handle_admin_force_end(
-                                        &cache2,
-                                        &pubsub2,
-                                        &uow2,
-                                        &live_tasks2,
-                                        &mtx_instances2,
-                                        &ws_mgr3,
-                                        event.stream_id,
-                                    ).await;
+                                    let cache = cache2.clone();
+                                    let pubsub = pubsub2.clone();
+                                    let uow = uow2.clone();
+                                    let live_tasks = live_tasks2.clone();
+                                    let mtx_instances = mtx_instances2.clone();
+                                    let ws_manager = ws_mgr3.clone();
+                                    let span = tracing::info_span!(
+                                        "handle_admin_force_end",
+                                        stream_id = %event.stream_id,
+                                        requested_by = %event.requested_by
+                                    );
+                                    telemetry::set_parent_from_traceparent(
+                                        &span,
+                                        event.traceparent.as_deref(),
+                                    );
+                                    async move {
+                                        tracing::info!(
+                                            stream_id = %event.stream_id,
+                                            requested_by = %event.requested_by,
+                                            "Received admin_force_end event"
+                                        );
+                                        handle_admin_force_end(
+                                            &cache,
+                                            &pubsub,
+                                            &uow,
+                                            &live_tasks,
+                                            &mtx_instances,
+                                            &ws_manager,
+                                            event.stream_id,
+                                        )
+                                        .await;
+                                    }
+                                    .instrument(span)
+                                    .await;
                                 }
                                 Err(e) => {
                                     tracing::warn!(error = %e, "Failed to parse admin_force_end event");
@@ -160,18 +205,56 @@ pub async fn spawn(
                     match result {
                         Ok(payload) => {
                             match serde_json::from_str::<RedisEvent>(&payload) {
-                                Ok(RedisEvent::LiveStreams { data }) => {
-                                    ws_manager.update_cached_live_streams(data.clone()).await;
-                                    ws_manager.broadcast_to_all(&ServerMessage::LiveStreams { data }).await;
+                                Ok(RedisEvent::LiveStreams { data, traceparent }) => {
+                                    let ws_manager = ws_manager.clone();
+                                    let span = tracing::info_span!("redis_event_live_streams");
+                                    telemetry::set_parent_from_traceparent(
+                                        &span,
+                                        traceparent.as_deref(),
+                                    );
+                                    async move {
+                                        ws_manager.update_cached_live_streams(data.clone()).await;
+                                        ws_manager
+                                            .broadcast_to_all(&ServerMessage::LiveStreams { data })
+                                            .await;
+                                    }
+                                    .instrument(span)
+                                    .await;
                                 }
-                                Ok(RedisEvent::ViewerCount { stream_id, count }) => {
-                                    ws_manager.update_viewer_count(stream_id, count).await;
-                                    let msg = ServerMessage::ViewerCount { stream_id, count };
-                                    ws_manager.broadcast_to_stream_subscribers(&stream_id, &msg).await;
+                                Ok(RedisEvent::ViewerCount { stream_id, count, traceparent }) => {
+                                    let ws_manager = ws_manager.clone();
+                                    let span =
+                                        tracing::info_span!("redis_event_viewer_count", %stream_id, count);
+                                    telemetry::set_parent_from_traceparent(
+                                        &span,
+                                        traceparent.as_deref(),
+                                    );
+                                    async move {
+                                        ws_manager.update_viewer_count(stream_id, count).await;
+                                        let msg = ServerMessage::ViewerCount { stream_id, count };
+                                        ws_manager
+                                            .broadcast_to_stream_subscribers(&stream_id, &msg)
+                                            .await;
+                                    }
+                                    .instrument(span)
+                                    .await;
                                 }
-                                Ok(RedisEvent::Reconnect { reason, stream_ids }) => {
-                                    let msg = ServerMessage::Reconnect { reason, stream_ids };
-                                    ws_manager.broadcast_to_all(&msg).await;
+                                Ok(RedisEvent::Reconnect { reason, stream_ids, traceparent }) => {
+                                    let ws_manager = ws_manager.clone();
+                                    let span = tracing::info_span!(
+                                        "redis_event_reconnect",
+                                        affected = stream_ids.len()
+                                    );
+                                    telemetry::set_parent_from_traceparent(
+                                        &span,
+                                        traceparent.as_deref(),
+                                    );
+                                    async move {
+                                        let msg = ServerMessage::Reconnect { reason, stream_ids };
+                                        ws_manager.broadcast_to_all(&msg).await;
+                                    }
+                                    .instrument(span)
+                                    .await;
                                 }
                                 Err(e) => {
                                     tracing::warn!(error = %e, "Failed to parse Redis event");
@@ -341,7 +424,10 @@ async fn publish_live_streams_event(
         });
     }
 
-    let event = crate::ws::types::RedisEvent::LiveStreams { data };
+    let event = crate::ws::types::RedisEvent::LiveStreams {
+        data,
+        traceparent: telemetry::inject_traceparent(),
+    };
     let json = serde_json::to_string(&event)?;
     pubsub.publish("streamhub:events", &json).await?;
     Ok(())

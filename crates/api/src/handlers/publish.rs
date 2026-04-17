@@ -462,7 +462,10 @@ pub(crate) async fn publish_live_streams_event(state: &AppState) -> Result<(), a
         });
     }
 
-    let event = crate::ws::types::RedisEvent::LiveStreams { data };
+    let event = crate::ws::types::RedisEvent::LiveStreams {
+        data,
+        traceparent: telemetry::inject_traceparent(),
+    };
     let json = serde_json::to_string(&event)?;
     state.pubsub.publish("streamhub:events", &json).await?;
     Ok(())

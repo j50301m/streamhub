@@ -10,10 +10,11 @@
 use std::sync::Arc;
 
 use cache::{CacheStore, PubSub};
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::ws::manager::WsManager;
-use crate::ws::types::{ChatErrorReason, ChatMessagePayload, ServerMessage};
+use crate::ws::types::{ChatErrorReason, ChatMessagePayload, ServerMessage, TracedServerMessage};
 
 /// Hard limit on chat message size (characters, not bytes).
 pub const CHAT_MAX_CHARS: usize = 500;
@@ -200,7 +201,10 @@ pub async fn handle_send_chat(
         ts_ms: parse_entry_ts_ms(&entry_id),
     };
 
-    let envelope = ServerMessage::ChatMessage { stream_id, message };
+    let envelope = TracedServerMessage {
+        message: ServerMessage::ChatMessage { stream_id, message },
+        traceparent: telemetry::inject_traceparent(),
+    };
     let payload = match serde_json::to_string(&envelope) {
         Ok(s) => s,
         Err(e) => {
@@ -322,9 +326,41 @@ pub async fn ensure_chat_pubsub_task(
         loop {
             match rx.recv().await {
                 Ok(payload) => {
-                    ws_manager
-                        .broadcast_chat_to_room(&stream_id, &payload)
-                        .await;
+                    let (message, traceparent) =
+                        match serde_json::from_str::<TracedServerMessage>(&payload) {
+                            Ok(envelope) => (envelope.message, envelope.traceparent),
+                            Err(traced_err) => {
+                                match serde_json::from_str::<ServerMessage>(&payload) {
+                                    Ok(message) => (message, None),
+                                    Err(raw_err) => {
+                                        tracing::warn!(
+                                            error = %traced_err,
+                                            fallback_error = %raw_err,
+                                            %stream_id,
+                                            "chat pubsub payload parse failed"
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
+                        };
+
+                    let text = match serde_json::to_string(&message) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            tracing::warn!(error = %error, %stream_id, "chat pubsub serialize failed");
+                            continue;
+                        }
+                    };
+
+                    let span = tracing::info_span!("chat_pubsub_forward", %stream_id);
+                    telemetry::set_parent_from_traceparent(&span, traceparent.as_deref());
+                    let ws_manager = ws_manager.clone();
+                    async move {
+                        ws_manager.broadcast_chat_to_room(&stream_id, &text).await;
+                    }
+                    .instrument(span)
+                    .await;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!(skipped = n, "chat subscriber lagged");
@@ -344,8 +380,12 @@ pub async fn ensure_chat_pubsub_task(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::extract::ws::Message;
     use cache::{InMemoryCache, InMemoryPubSub};
     use sea_orm::{DbBackend, MockDatabase};
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+    use tokio::time::{Duration, timeout};
 
     fn mock_uow() -> repo::UnitOfWork {
         repo::UnitOfWork::new(MockDatabase::new(DbBackend::Postgres).into_connection())
@@ -841,5 +881,45 @@ mod tests {
         )
         .await;
         assert!(matches!(out, SendChatOutcome::Accepted));
+    }
+
+    #[tokio::test]
+    async fn old_chat_pubsub_payload_is_forwarded_without_traceparent() {
+        let pubsub = Arc::new(InMemoryPubSub::new());
+        let ws_manager = WsManager::new();
+        let stream_id = Uuid::new_v4();
+        let conn_id = Uuid::new_v4();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        ws_manager.add_connection(conn_id, tx).await;
+        ws_manager.subscribe_chat(conn_id, stream_id).await;
+        ensure_chat_pubsub_task(pubsub.clone(), ws_manager.clone(), stream_id).await;
+
+        let payload = serde_json::to_string(&ServerMessage::ChatMessageDeleted {
+            stream_id,
+            msg_id: "msg-1".to_string(),
+        })
+        .unwrap();
+
+        pubsub
+            .publish(&mediamtx::keys::chat_pubsub_channel(&stream_id), &payload)
+            .await
+            .unwrap();
+
+        let message = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("chat forward timed out")
+            .expect("connection should receive message");
+
+        match message {
+            Message::Text(text) => {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                assert_eq!(value["type"], "chat_message_deleted");
+                assert_eq!(value["stream_id"], stream_id.to_string());
+                assert_eq!(value["msg_id"], "msg-1");
+                assert!(value.get("traceparent").is_none());
+            }
+            other => panic!("unexpected ws message: {other:?}"),
+        }
     }
 }

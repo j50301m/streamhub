@@ -12,8 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
-use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::Level;
+use tower_http::trace::TraceLayer;
 
 mod config;
 mod extractors;
@@ -93,7 +92,7 @@ async fn main() -> Result<()> {
         // Base HTTP metrics — counts every request including /metrics itself.
         .layer(axum::middleware::from_fn(telemetry::base_http_metrics))
         .layer(cors)
-        .layer(TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::new().level(Level::INFO)))
+        .layer(TraceLayer::new_for_http().make_span_with(telemetry::http_make_span))
         .with_state(app_state);
 
     tracing::info!("bo-api listening on {addr}");

@@ -1,6 +1,6 @@
 # SPEC-035 bo-api Observability（OpenTelemetry parity with api）
 
-狀態：in-progress
+狀態：done
 
 ## 目標
 
