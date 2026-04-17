@@ -52,6 +52,23 @@ impl Extractor for HeaderExtractor<'_> {
     }
 }
 
+fn extract_context<E: Extractor>(extractor: &E) -> Option<opentelemetry::Context> {
+    let context =
+        opentelemetry::global::get_text_map_propagator(|propagator| propagator.extract(extractor));
+
+    if context.span().span_context().is_valid() {
+        Some(context)
+    } else {
+        None
+    }
+}
+
+fn log_set_parent_failure(result: Result<(), tracing_opentelemetry::SetParentError>, source: &str) {
+    if let Err(error) = result {
+        tracing::warn!(error = %error, source, "Failed to attach parent context to span");
+    }
+}
+
 /// Serialize the current span context as a W3C `traceparent` header.
 ///
 /// Returns `None` when there is no active OpenTelemetry context attached to
@@ -89,10 +106,7 @@ pub fn extract_parent_context(traceparent: Option<&str>) -> Option<opentelemetry
     let extractor = SingleHeaderExtractor {
         traceparent: Some(traceparent),
     };
-    let context =
-        opentelemetry::global::get_text_map_propagator(|propagator| propagator.extract(&extractor));
-
-    if context.span().span_context().is_valid() {
+    if let Some(context) = extract_context(&extractor) {
         Some(context)
     } else {
         tracing::warn!("Ignoring malformed traceparent");
@@ -105,7 +119,7 @@ pub fn extract_parent_context(traceparent: Option<&str>) -> Option<opentelemetry
 /// Missing or malformed input is ignored.
 pub fn set_parent_from_traceparent(span: &tracing::Span, traceparent: Option<&str>) {
     if let Some(context) = extract_parent_context(traceparent) {
-        let _ = span.set_parent(context);
+        log_set_parent_failure(span.set_parent(context), "traceparent");
     }
 }
 
@@ -116,11 +130,10 @@ pub fn http_make_span<B>(request: &Request<B>) -> tracing::Span {
     let extractor = HeaderExtractor {
         headers: request.headers(),
     };
-    let context =
-        opentelemetry::global::get_text_map_propagator(|propagator| propagator.extract(&extractor));
-
-    if context.span().span_context().is_valid() {
-        let _ = span.set_parent(context);
+    if let Some(context) = extract_context(&extractor) {
+        log_set_parent_failure(span.set_parent(context), "http.headers.traceparent");
+    } else if request.headers().contains_key("traceparent") {
+        tracing::warn!("Ignoring malformed traceparent from HTTP headers");
     }
 
     span

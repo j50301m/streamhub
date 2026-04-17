@@ -170,6 +170,18 @@ pub enum ClientMessage {
 
 /// Internal pub/sub wrapper that carries trace propagation metadata without
 /// changing the client-facing WebSocket message schema.
+///
+/// # Design tradeoff
+///
+/// This envelope flattens `ServerMessage` so old pub/sub payloads (pre
+/// SPEC-036, emitted as a bare `ServerMessage` JSON) still deserialize via
+/// the subscriber's fallback path. That fallback path (`chat.rs`) also
+/// deserializes directly into `ServerMessage`, so **any future change to
+/// `ServerMessage`'s serde markers is implicitly a breaking change for the
+/// pub/sub fallback as well**. This coupling is intentional and temporary:
+/// once all API instances are guaranteed to be on the envelope format, the
+/// bare `ServerMessage` fallback in `chat.rs` can be removed and this note
+/// deleted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TracedServerMessage {
     /// The original WebSocket payload delivered to clients.
