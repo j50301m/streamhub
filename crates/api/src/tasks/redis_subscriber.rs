@@ -133,8 +133,8 @@ pub async fn spawn(
                             #[derive(serde::Deserialize)]
                             struct AdminForceEndEvent {
                                 stream_id: Uuid,
-                                #[allow(dead_code)]
                                 requested_by: Uuid,
+                                requested_at: String,
                                 #[serde(default)]
                                 traceparent: Option<String>,
                             }
@@ -149,7 +149,8 @@ pub async fn spawn(
                                     let span = tracing::info_span!(
                                         "handle_admin_force_end",
                                         stream_id = %event.stream_id,
-                                        requested_by = %event.requested_by
+                                        requested_by = %event.requested_by,
+                                        requested_at = %event.requested_at
                                     );
                                     telemetry::set_parent_from_traceparent(
                                         &span,
@@ -159,6 +160,7 @@ pub async fn spawn(
                                         tracing::info!(
                                             stream_id = %event.stream_id,
                                             requested_by = %event.requested_by,
+                                            requested_at = %event.requested_at,
                                             "Received admin_force_end event"
                                         );
                                         handle_admin_force_end(
