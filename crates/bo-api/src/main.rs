@@ -14,9 +14,6 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::Level;
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 
 mod config;
 mod extractors;
@@ -29,13 +26,15 @@ mod tests;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_tracing();
-
     let config = config::BoConfig::load_iter([
         std::path::Path::new(".env.local"),
         std::path::Path::new(".env"),
     ])
     .expect("failed to load bo-api config");
+
+    // Install OTel + Prometheus + JSON log subscriber before any
+    // `tracing::info!` fires. Returns a handle used by the /metrics route.
+    let prometheus_handle = telemetry::init_telemetry(&config.otel_endpoint, "streamhub-bo-api")?;
 
     tracing::info!(port = config.port, "Starting bo-api");
 
@@ -67,22 +66,32 @@ async fn main() -> Result<()> {
         uow: UnitOfWork::new(db),
         cache,
         pubsub,
+        metrics: prometheus_handle,
         config,
     };
 
-    let router = axum::Router::new()
-        .merge(routes::app_router())
-        // bo-api rate limit: user_id key (all routes require auth)
+    // Authed router — all admin routes sit behind JWT + rate limit.
+    let authed_router = routes::app_router()
         .layer(RateLimitLayer::new(
             rate_limiter,
             bo_general_policy,
             RateLimitMode::UserIdOnly,
         ))
-        // Inject user_id extension from JWT
         .layer(axum::middleware::from_fn_with_state(
             app_state.clone(),
             inject_user_id_extension,
-        ))
+        ));
+
+    // Unauthed scrape endpoint — Prometheus polls `/metrics` without JWT.
+    // Kept outside the authed layer stack so it is never gated by auth
+    // or rate limit.
+    let metrics_router = routes::metrics_router();
+
+    let router = axum::Router::new()
+        .merge(authed_router)
+        .merge(metrics_router)
+        // Base HTTP metrics — counts every request including /metrics itself.
+        .layer(axum::middleware::from_fn(telemetry::base_http_metrics))
         .layer(cors)
         .layer(TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::new().level(Level::INFO)))
         .with_state(app_state);
@@ -110,13 +119,6 @@ fn build_cors(config: &config::BoConfig) -> CorsLayer {
             .allow_methods(tower_http::cors::Any)
             .allow_headers(tower_http::cors::Any)
     }
-}
-
-fn init_tracing() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .init();
 }
 
 async fn shutdown_signal() {

@@ -86,6 +86,16 @@ fn user_to_response(m: &entity::user::Model) -> UserResponse {
 // ── Handlers ───────────────────────────────────────────────────────
 
 /// `GET /v1/admin/users` — list users with search / filter / pagination.
+#[tracing::instrument(
+    skip(state, _admin),
+    fields(
+        admin_id = %_admin.0.id,
+        page = query.page,
+        per_page = query.per_page,
+        role = ?query.role,
+        suspended = ?query.suspended,
+    )
+)]
 pub async fn list_users(
     _admin: AdminUser,
     State(state): State<BoAppState>,
@@ -119,6 +129,10 @@ pub async fn list_users(
 }
 
 /// `PATCH /v1/admin/users/:id/role` — update a user's role.
+#[tracing::instrument(
+    skip(state, payload),
+    fields(admin_id = %admin.0.id, user_id = %user_id, new_role = ?payload.role)
+)]
 pub async fn update_role(
     admin: AdminUser,
     State(state): State<BoAppState>,
@@ -147,6 +161,14 @@ pub async fn update_role(
 }
 
 /// `POST /v1/admin/users/:id/suspend` — suspend a user.
+#[tracing::instrument(
+    skip(state, payload),
+    fields(
+        admin_id = %admin.0.id,
+        user_id = %user_id,
+        duration_secs = ?payload.duration_secs,
+    )
+)]
 pub async fn suspend(
     admin: AdminUser,
     State(state): State<BoAppState>,
@@ -161,35 +183,61 @@ pub async fn suspend(
         .duration_secs
         .map(|secs| Utc::now() + Duration::seconds(secs as i64));
 
-    // 1. DB update
-    let model = state
-        .uow
-        .user_repo()
-        .set_suspended(user_id, until, payload.reason)
-        .await
-        .map_err(|e| match e {
-            repo::RepoError::NotFound => AppError::NotFound("USER_NOT_FOUND".to_string()),
-            other => AppError::from(other),
-        })?;
-
-    // 2. Redis: SET user:state:{user_id} "suspended"
-    let key = mediamtx::keys::user_state(&user_id);
-    let ttl = payload.duration_secs;
-    let _ = state.cache.set(&key, "suspended", ttl).await;
-
-    // 3. Pub/sub: notify all API instances to disconnect WS
-    let event = serde_json::json!({ "user_id": user_id });
-    let _ = state
-        .pubsub
-        .publish(mediamtx::keys::USER_SUSPENDED_CHANNEL, &event.to_string())
-        .await;
+    let model = suspend_update_db(&state, user_id, until, payload.reason.clone()).await?;
+    suspend_set_cache(&state, user_id, payload.duration_secs).await;
+    suspend_broadcast(&state, user_id).await;
 
     Ok(Json(DataResponse {
         data: user_to_response(&model),
     }))
 }
 
+/// Persists the suspension to Postgres. Maps `NotFound` into a 404 so the
+/// admin client can distinguish missing users from transient DB failures.
+#[tracing::instrument(skip(state), fields(user_id = %user_id))]
+async fn suspend_update_db(
+    state: &BoAppState,
+    user_id: Uuid,
+    until: Option<chrono::DateTime<Utc>>,
+    reason: Option<String>,
+) -> Result<entity::user::Model, AppError> {
+    state
+        .uow
+        .user_repo()
+        .set_suspended(user_id, until, reason)
+        .await
+        .map_err(|e| match e {
+            repo::RepoError::NotFound => AppError::NotFound("USER_NOT_FOUND".to_string()),
+            other => AppError::from(other),
+        })
+}
+
+/// Writes the `user:state:{user_id} = "suspended"` flag used by api's
+/// access-state negative cache (SPEC-014). Failure is non-fatal.
+#[tracing::instrument(skip(state), fields(user_id = %user_id, ttl_secs = ?ttl))]
+async fn suspend_set_cache(state: &BoAppState, user_id: Uuid, ttl: Option<u64>) {
+    let key = mediamtx::keys::user_state(&user_id);
+    if let Err(e) = state.cache.set(&key, "suspended", ttl).await {
+        tracing::warn!(error = %e, "Failed to write user_state cache");
+    }
+}
+
+/// Publishes `user_suspended` on the shared pub/sub channel so live API
+/// instances drop any open WS for this user. Failure is non-fatal.
+#[tracing::instrument(skip(state), fields(user_id = %user_id))]
+async fn suspend_broadcast(state: &BoAppState, user_id: Uuid) {
+    let event = serde_json::json!({ "user_id": user_id });
+    if let Err(e) = state
+        .pubsub
+        .publish(mediamtx::keys::USER_SUSPENDED_CHANNEL, &event.to_string())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to publish user_suspended event");
+    }
+}
+
 /// `DELETE /v1/admin/users/:id/suspend` — unsuspend a user (idempotent).
+#[tracing::instrument(skip(state, _admin), fields(admin_id = %_admin.0.id, user_id = %user_id))]
 pub async fn unsuspend(
     _admin: AdminUser,
     State(state): State<BoAppState>,

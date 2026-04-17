@@ -1,3 +1,6 @@
+//! Structured JSON log formatter that captures span fields and injects the
+//! active OpenTelemetry trace_id so Loki can link logs to Tempo traces.
+
 use opentelemetry::trace::TraceContextExt;
 use std::fmt;
 use tracing::span::{Attributes, Id, Record};

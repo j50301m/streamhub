@@ -6,7 +6,7 @@ mod thumbnail_test;
 use crate::config::AppConfig;
 use axum::body::Body;
 use http_body_util::BodyExt;
-use metrics_exporter_prometheus::PrometheusHandle;
+use telemetry::PrometheusHandle;
 
 const JWT_SECRET: &str = "test-secret";
 
@@ -18,7 +18,7 @@ pub(crate) fn test_redis_pool() -> deadpool_redis::Pool {
 
 pub(crate) fn test_metrics() -> PrometheusHandle {
     // Each test needs its own recorder; use a throwaway builder.
-    metrics_exporter_prometheus::PrometheusBuilder::new()
+    telemetry::PrometheusBuilder::new()
         .build_recorder()
         .handle()
 }

@@ -76,6 +76,10 @@ pub struct ChatData {
 
 /// `GET /v1/admin/moderation/bans` — per-broadcaster banned users aggregated
 /// from recent streams' owners.
+#[tracing::instrument(
+    skip(state, _admin),
+    fields(admin_id = %_admin.0.id, page = query.page, per_page = query.per_page)
+)]
 pub async fn list_bans(
     _admin: AdminUser,
     State(state): State<BoAppState>,
@@ -85,8 +89,31 @@ pub async fn list_bans(
     let page = query.page.max(1);
     let since = Utc::now() - Duration::hours(24);
 
-    // Get recent streams and extract distinct broadcaster (owner) IDs,
-    // keeping a representative stream_id per broadcaster for the unban URL.
+    let broadcaster_stream = list_bans_scan_broadcasters(&state, since).await?;
+    let mut broadcaster_ids: Vec<Uuid> = broadcaster_stream.keys().copied().collect();
+    broadcaster_ids.sort();
+
+    let mut all_bans = list_bans_resolve(&state, &broadcaster_ids, &broadcaster_stream).await;
+    let (total, bans) = list_bans_aggregate(&mut all_bans, page, per_page);
+
+    Ok(Json(BansResponse {
+        data: BansData {
+            bans,
+            total,
+            page,
+            per_page,
+        },
+    }))
+}
+
+/// Reads recent streams from Postgres and groups them by broadcaster, keeping
+/// a representative stream_id per broadcaster so the admin frontend can hit
+/// `DELETE /v1/streams/:stream_id/chat/bans/:user_id`.
+#[tracing::instrument(skip(state), fields(since = %since))]
+async fn list_bans_scan_broadcasters(
+    state: &BoAppState,
+    since: chrono::DateTime<Utc>,
+) -> Result<std::collections::HashMap<Uuid, Uuid>, AppError> {
     let recent_streams = state.uow.stream_repo().find_recent_streams(since).await?;
     let mut broadcaster_stream: std::collections::HashMap<Uuid, Uuid> =
         std::collections::HashMap::new();
@@ -95,12 +122,24 @@ pub async fn list_bans(
             broadcaster_stream.entry(uid).or_insert(s.id);
         }
     }
-    let mut broadcaster_ids: Vec<Uuid> = broadcaster_stream.keys().copied().collect();
-    broadcaster_ids.sort();
+    Ok(broadcaster_stream)
+}
 
-    // Aggregate bans per-broadcaster
+/// For every known broadcaster, reads their chat ban set from Redis, prunes
+/// stale members (TTL == -2), and resolves banned user emails from Postgres.
+/// This is the N*M hot path — keep the surrounding span name stable for
+/// dashboards.
+#[tracing::instrument(
+    skip(state, broadcaster_ids, broadcaster_stream),
+    fields(broadcaster_count = broadcaster_ids.len())
+)]
+async fn list_bans_resolve(
+    state: &BoAppState,
+    broadcaster_ids: &[Uuid],
+    broadcaster_stream: &std::collections::HashMap<Uuid, Uuid>,
+) -> Vec<BanEntry> {
     let mut all_bans = Vec::new();
-    for broadcaster_id in &broadcaster_ids {
+    for broadcaster_id in broadcaster_ids {
         let bans_set_key = keys::chat_bans_set(broadcaster_id);
         let members = state
             .cache
@@ -151,8 +190,16 @@ pub async fn list_bans(
             });
         }
     }
+    all_bans
+}
 
-    // Sort for stable pagination (broadcaster first, then user).
+/// Sorts for stable pagination and slices to the requested page.
+#[tracing::instrument(skip(all_bans), fields(total_before = all_bans.len(), page, per_page))]
+fn list_bans_aggregate(
+    all_bans: &mut Vec<BanEntry>,
+    page: u64,
+    per_page: u64,
+) -> (u64, Vec<BanEntry>) {
     all_bans.sort_by(|a, b| {
         a.broadcaster_id
             .cmp(&b.broadcaster_id)
@@ -162,22 +209,18 @@ pub async fn list_bans(
     let total = all_bans.len() as u64;
     let start = ((page - 1) * per_page) as usize;
     let bans: Vec<BanEntry> = all_bans
-        .into_iter()
+        .drain(..)
         .skip(start)
         .take(per_page as usize)
         .collect();
-
-    Ok(Json(BansResponse {
-        data: BansData {
-            bans,
-            total,
-            page,
-            per_page,
-        },
-    }))
+    (total, bans)
 }
 
 /// `GET /v1/admin/moderation/streams/:id/chat` — view chat history for a stream.
+#[tracing::instrument(
+    skip(state, _admin),
+    fields(admin_id = %_admin.0.id, stream_id = %stream_id)
+)]
 pub async fn stream_chat(
     _admin: AdminUser,
     State(state): State<BoAppState>,

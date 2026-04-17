@@ -4,21 +4,17 @@ use anyhow::Result;
 use axum::Router;
 use cache::{CacheStore, PubSub, RedisCacheStore, RedisPubSub};
 use cfgloader_rs::FromEnv;
-use metrics_exporter_prometheus::PrometheusHandle;
-use opentelemetry_otlp::WithExportConfig;
 use rate_limit::{RateLimitLayer, RateLimitMode, RateLimitPolicy, RedisRateLimiter};
 use repo::UnitOfWork;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage::GcsStorage;
+use telemetry::PrometheusHandle;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::Level;
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 use uuid::Uuid;
 
 use crate::middleware;
@@ -128,9 +124,7 @@ impl App {
         let router = Router::new()
             .merge(app_router)
             .layer(axum::Extension(ws_manager))
-            .layer(axum::middleware::from_fn(
-                middleware::metrics::track_metrics,
-            ))
+            .layer(axum::middleware::from_fn(telemetry::base_http_metrics))
             // General authed rate limit: only for requests with a resolved user_id
             .layer(RateLimitLayer::new(
                 rate_limiter.clone(),
@@ -199,40 +193,7 @@ async fn shutdown_signal() {
 }
 
 fn init_telemetry(otel_endpoint: &str) -> Result<PrometheusHandle> {
-    let exporter = opentelemetry_otlp::SpanExporter::builder()
-        .with_tonic()
-        .with_endpoint(otel_endpoint)
-        .build()?;
-
-    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-        .with_batch_exporter(exporter)
-        .with_resource(
-            opentelemetry_sdk::Resource::builder()
-                .with_service_name("streamhub-api")
-                .build(),
-        )
-        .build();
-
-    // Set as global provider, then get tracer from global
-    opentelemetry::global::set_tracer_provider(provider);
-    let tracer = opentelemetry::global::tracer("streamhub-api");
-
-    let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
-        .set_buckets(&[
-            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
-        ])
-        .expect("invalid histogram buckets")
-        .install_recorder()
-        .expect("failed to install Prometheus recorder");
-
-    tracing_subscriber::registry()
-        .with(tracing_opentelemetry::layer().with_tracer(tracer))
-        .with(crate::log_format::SpanFieldsLayer)
-        .with(tracing_subscriber::fmt::layer().event_format(crate::log_format::JsonWithTraceId))
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .init();
-
-    Ok(prometheus_handle)
+    telemetry::init_telemetry(otel_endpoint, "streamhub-api").map_err(Into::into)
 }
 
 async fn init_db(config: &AppConfig) -> Result<sea_orm::DatabaseConnection> {

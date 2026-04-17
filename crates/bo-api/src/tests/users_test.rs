@@ -73,6 +73,7 @@ fn test_state(db: sea_orm::DatabaseConnection) -> BoAppState {
         config: test_config(),
         cache: Arc::new(cache::InMemoryCache::new()),
         pubsub: Arc::new(cache::InMemoryPubSub::new()),
+        metrics: super::test_metrics(),
     }
 }
 

@@ -32,6 +32,10 @@ pub struct BoConfig {
     #[env("BO_API_CORS_ORIGINS", default = "http://localhost:3000")]
     pub cors_origins: String,
 
+    /// OpenTelemetry OTLP/gRPC endpoint for trace export (`OTEL_EXPORTER_OTLP_ENDPOINT`).
+    #[env("OTEL_EXPORTER_OTLP_ENDPOINT", default = "http://localhost:4317")]
+    pub otel_endpoint: String,
+
     // ── Rate Limiting ─────────────────────────────────────────────
     /// General rate limit: max requests per window.
     #[env("RATE_LIMIT_BO_GENERAL_LIMIT", default = "60")]

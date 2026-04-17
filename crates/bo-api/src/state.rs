@@ -5,6 +5,7 @@ use repo::UnitOfWork;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::sync::Arc;
 use std::time::Duration;
+use telemetry::PrometheusHandle;
 
 use crate::config::BoConfig;
 
@@ -17,6 +18,8 @@ pub struct BoAppState {
     pub cache: Arc<dyn CacheStore>,
     /// Pub/sub for cross-instance event fan-out (user_suspended).
     pub pubsub: Arc<dyn PubSub>,
+    /// Prometheus metrics handle exposed on `/metrics`.
+    pub metrics: PrometheusHandle,
     /// Parsed environment configuration.
     pub config: BoConfig,
 }

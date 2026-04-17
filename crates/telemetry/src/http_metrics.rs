@@ -1,3 +1,5 @@
+//! Base HTTP metrics middleware shared by all HTTP services.
+
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::Response;
@@ -6,7 +8,13 @@ use std::time::Instant;
 
 /// Records `http_requests_total` (counter) and `http_request_duration_seconds`
 /// (histogram) for every request, labelled by method / path / status.
-pub async fn track_metrics(req: Request, next: Next) -> Response {
+///
+/// Designed to be mounted once per Axum router:
+///
+/// ```ignore
+/// router.layer(axum::middleware::from_fn(telemetry::base_http_metrics));
+/// ```
+pub async fn base_http_metrics(req: Request, next: Next) -> Response {
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
 

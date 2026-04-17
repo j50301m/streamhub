@@ -18,7 +18,6 @@ pub mod extractors;
 /// HTTP route handlers grouped by resource.
 pub mod handlers;
 mod initializer;
-mod log_format;
 /// Axum middleware (auth, metrics).
 pub mod middleware;
 mod routes;
