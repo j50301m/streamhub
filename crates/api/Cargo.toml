@@ -41,7 +41,6 @@ deadpool-redis = { workspace = true }
 reqwest = { workspace = true }
 base64 = "0.22"
 tokio-util = { workspace = true }
-tempfile = "3"
 
 [dev-dependencies]
 sea-orm = { workspace = true, features = ["mock"] }

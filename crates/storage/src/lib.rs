@@ -24,6 +24,11 @@ pub trait ObjectStorage: Send + Sync {
     /// returns that key.
     async fn upload_file(&self, local_path: &Path, key: &str) -> Result<String, StorageError>;
 
+    /// Uploads raw bytes directly to the backend under `key` and returns that
+    /// key. Intended for small in-memory payloads (thumbnails, metadata blobs)
+    /// where writing a temp file would be wasteful.
+    async fn upload_bytes(&self, data: &[u8], key: &str) -> Result<String, StorageError>;
+
     /// Uploads every file directly inside `local_dir` (non-recursive) under
     /// `prefix/` and returns the list of keys written.
     async fn upload_dir(&self, local_dir: &Path, prefix: &str)
@@ -165,6 +170,35 @@ impl ObjectStorage for GcsStorage {
         Ok(key.to_string())
     }
 
+    #[tracing::instrument(skip(self, data), fields(bucket = %self.bucket, %key, size = data.len()))]
+    async fn upload_bytes(&self, data: &[u8], key: &str) -> Result<String, StorageError> {
+        let url = self.upload_url(key);
+
+        let mut req = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/octet-stream")
+            .body(data.to_vec());
+
+        if let Some(token) = &self.auth_token {
+            req = req.header("Authorization", format!("Bearer {token}"));
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| StorageError::Upload(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StorageError::Upload(format!("{status}: {body}")));
+        }
+
+        tracing::info!(key, "Uploaded bytes to storage");
+        Ok(key.to_string())
+    }
+
     #[tracing::instrument(skip(self), fields(bucket = %self.bucket, %prefix))]
     async fn upload_dir(
         &self,
@@ -244,6 +278,11 @@ impl ObjectStorage for MockStorage {
         Ok(key.to_string())
     }
 
+    async fn upload_bytes(&self, _data: &[u8], key: &str) -> Result<String, StorageError> {
+        self.uploaded.lock().unwrap().push(key.to_string());
+        Ok(key.to_string())
+    }
+
     async fn upload_dir(
         &self,
         local_dir: &Path,
@@ -304,6 +343,23 @@ mod tests {
         assert_eq!(keys.len(), 2);
         let uploaded = storage.uploaded.lock().unwrap();
         assert_eq!(uploaded.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_mock_upload_bytes() {
+        let storage = MockStorage::new();
+        let data = b"fake jpeg content";
+
+        let key = storage
+            .upload_bytes(data, "streams/abc/live-thumb.jpg")
+            .await
+            .unwrap();
+
+        assert_eq!(key, "streams/abc/live-thumb.jpg");
+        assert_eq!(
+            storage.uploaded.lock().unwrap().as_slice(),
+            &["streams/abc/live-thumb.jpg"]
+        );
     }
 
     #[test]
