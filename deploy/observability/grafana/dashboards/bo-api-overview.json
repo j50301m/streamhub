@@ -144,7 +144,7 @@
     }
   ],
   "schemaVersion": 39,
-  "tags": ["streamhub", "bo-api", "admin"],
+  "tags": ["streamhub", "bo-api"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},

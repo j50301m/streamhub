@@ -124,7 +124,7 @@
     }
   ],
   "schemaVersion": 39,
-  "tags": ["streamhub"],
+  "tags": ["streamhub", "api"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
