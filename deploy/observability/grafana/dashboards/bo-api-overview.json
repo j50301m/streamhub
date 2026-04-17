@@ -13,7 +13,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(http_requests_total{job=\"streamhub-api\"}[5m])) by (status)",
+          "expr": "sum(rate(http_requests_total{job=\"streamhub-bo-api\"}[5m])) by (status)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -33,17 +33,17 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=\"streamhub-api\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=\"streamhub-bo-api\"}[5m])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"streamhub-api\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"streamhub-bo-api\"}[5m])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"streamhub-api\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"streamhub-bo-api\"}[5m])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -63,7 +63,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(http_requests_total{job=\"streamhub-api\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"streamhub-api\"}[5m]))",
+          "expr": "sum(rate(http_requests_total{job=\"streamhub-bo-api\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"streamhub-bo-api\"}[5m]))",
           "legendFormat": "5xx error rate",
           "refId": "A"
         }
@@ -79,9 +79,29 @@
       }
     },
     {
-      "title": "CPU Usage",
+      "title": "Requests by Path",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"streamhub-bo-api\"}[5m])) by (path)",
+          "legendFormat": "{{path}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "fillOpacity": 10 }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "CPU Usage (host)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -101,9 +121,9 @@
       }
     },
     {
-      "title": "Memory Usage",
+      "title": "Memory Usage (host)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -124,12 +144,12 @@
     }
   ],
   "schemaVersion": 39,
-  "tags": ["streamhub"],
+  "tags": ["streamhub", "bo-api", "admin"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "StreamHub API Overview",
-  "uid": "streamhub-api-overview",
+  "title": "StreamHub bo-api Overview",
+  "uid": "streamhub-bo-api-overview",
   "version": 1
 }
