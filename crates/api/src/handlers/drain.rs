@@ -68,6 +68,7 @@ pub(crate) async fn drain_handler(
     let event = RedisEvent::Reconnect {
         reason: "server_maintenance".to_string(),
         stream_ids: affected_stream_ids,
+        traceparent: telemetry::inject_traceparent(),
     };
     let event_json = serde_json::to_string(&event).map_err(|e| {
         tracing::error!(error = %e, "Failed to serialize reconnect event");

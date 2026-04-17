@@ -10,10 +10,14 @@
 
 mod http_metrics;
 mod log_format;
+mod propagation;
 
 pub use http_metrics::base_http_metrics;
 pub use log_format::{JsonWithTraceId, SpanFields, SpanFieldsLayer};
 pub use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+pub use propagation::{
+    extract_parent_context, http_make_span, inject_traceparent, set_parent_from_traceparent,
+};
 
 // Re-export the `metrics` crate so downstream apps can emit app-specific
 // counters / histograms (e.g. `telemetry::metrics_api::counter!(...)`)
@@ -69,6 +73,10 @@ pub fn init_telemetry(
     otel_endpoint: &str,
     service_name: &'static str,
 ) -> Result<PrometheusHandle, TelemetryInitError> {
+    opentelemetry::global::set_text_map_propagator(
+        opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+    );
+
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
         .with_endpoint(otel_endpoint)

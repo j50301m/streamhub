@@ -139,6 +139,7 @@ async fn poll_viewer_counts(
                     let event = RedisEvent::ViewerCount {
                         stream_id,
                         count: reader_count,
+                        traceparent: telemetry::inject_traceparent(),
                     };
                     if let Ok(json) = serde_json::to_string(&event) {
                         let _ = pubsub.publish("streamhub:events", &json).await;

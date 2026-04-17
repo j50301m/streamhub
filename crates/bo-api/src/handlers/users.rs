@@ -11,6 +11,13 @@ use uuid::Uuid;
 use crate::extractors::AdminUser;
 use crate::state::BoAppState;
 
+#[derive(Debug, Serialize, Deserialize)]
+struct UserSuspendedEvent {
+    user_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    traceparent: Option<String>,
+}
+
 // ── Request / Response types ───────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -226,10 +233,20 @@ async fn suspend_set_cache(state: &BoAppState, user_id: Uuid, ttl: Option<u64>) 
 /// instances drop any open WS for this user. Failure is non-fatal.
 #[tracing::instrument(skip(state), fields(user_id = %user_id))]
 async fn suspend_broadcast(state: &BoAppState, user_id: Uuid) {
-    let event = serde_json::json!({ "user_id": user_id });
+    let event = UserSuspendedEvent {
+        user_id,
+        traceparent: telemetry::inject_traceparent(),
+    };
+    let payload = match serde_json::to_string(&event) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::warn!(error = %error, "Failed to serialize user_suspended event");
+            return;
+        }
+    };
     if let Err(e) = state
         .pubsub
-        .publish(mediamtx::keys::USER_SUSPENDED_CHANNEL, &event.to_string())
+        .publish(mediamtx::keys::USER_SUSPENDED_CHANNEL, &payload)
         .await
     {
         tracing::warn!(error = %e, "Failed to publish user_suspended event");

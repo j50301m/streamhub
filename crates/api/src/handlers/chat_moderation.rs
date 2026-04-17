@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::extractors::AppJson;
 use crate::handlers::streams::DataResponse;
 use crate::middleware::CurrentUser;
-use crate::ws::types::ServerMessage;
+use crate::ws::types::{ServerMessage, TracedServerMessage};
 
 fn assert_can_moderate(
     current_user: &CurrentUser,
@@ -83,9 +83,12 @@ pub(crate) async fn delete_message_handler(
         tracing::warn!(error = %e, "HDEL msgindex failed");
     }
 
-    let envelope = ServerMessage::ChatMessageDeleted {
-        stream_id,
-        msg_id: msg_id.clone(),
+    let envelope = TracedServerMessage {
+        message: ServerMessage::ChatMessageDeleted {
+            stream_id,
+            msg_id: msg_id.clone(),
+        },
+        traceparent: telemetry::inject_traceparent(),
     };
     let payload =
         serde_json::to_string(&envelope).map_err(|e| AppError::Internal(e.to_string()))?;

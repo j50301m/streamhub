@@ -19,7 +19,7 @@ pub struct ChatMessagePayload {
 }
 
 /// Server → Client messages sent over WebSocket.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     /// Full list of currently live streams. Sent on connect and whenever a
@@ -168,6 +168,18 @@ pub enum ClientMessage {
     },
 }
 
+/// Internal pub/sub wrapper that carries trace propagation metadata without
+/// changing the client-facing WebSocket message schema.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TracedServerMessage {
+    /// The original WebSocket payload delivered to clients.
+    #[serde(flatten)]
+    pub message: ServerMessage,
+    /// Optional W3C trace context used only for internal pub/sub propagation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traceparent: Option<String>,
+}
+
 /// Envelope for events published on Redis `streamhub:events`.
 ///
 /// Every API instance subscribes to this channel and re-broadcasts the event
@@ -179,6 +191,9 @@ pub enum RedisEvent {
     LiveStreams {
         /// Current live streams.
         data: Vec<LiveStreamData>,
+        /// W3C traceparent from the publishing span.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        traceparent: Option<String>,
     },
     /// Viewer-count change for a stream.
     ViewerCount {
@@ -186,6 +201,9 @@ pub enum RedisEvent {
         stream_id: Uuid,
         /// Current viewer count.
         count: u32,
+        /// W3C traceparent from the publishing span.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        traceparent: Option<String>,
     },
     /// Tell affected clients to reconnect (e.g. MTX draining).
     Reconnect {
@@ -193,19 +211,75 @@ pub enum RedisEvent {
         reason: String,
         /// Streams affected.
         stream_ids: Vec<Uuid>,
+        /// W3C traceparent from the publishing span.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        traceparent: Option<String>,
     },
 }
 
 impl From<RedisEvent> for ServerMessage {
     fn from(event: RedisEvent) -> Self {
         match event {
-            RedisEvent::LiveStreams { data } => ServerMessage::LiveStreams { data },
-            RedisEvent::ViewerCount { stream_id, count } => {
-                ServerMessage::ViewerCount { stream_id, count }
+            RedisEvent::LiveStreams {
+                data,
+                traceparent: _,
+            } => ServerMessage::LiveStreams { data },
+            RedisEvent::ViewerCount {
+                stream_id,
+                count,
+                traceparent: _,
+            } => ServerMessage::ViewerCount { stream_id, count },
+            RedisEvent::Reconnect {
+                reason,
+                stream_ids,
+                traceparent: _,
+            } => ServerMessage::Reconnect { reason, stream_ids },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redis_event_without_traceparent_deserializes() {
+        let payload = r#"{"type":"viewer_count","stream_id":"550e8400-e29b-41d4-a716-446655440000","count":7}"#;
+        let event: RedisEvent = serde_json::from_str(payload).expect("old payload should parse");
+
+        match event {
+            RedisEvent::ViewerCount {
+                stream_id,
+                count,
+                traceparent,
+            } => {
+                assert_eq!(
+                    stream_id,
+                    Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
+                );
+                assert_eq!(count, 7);
+                assert!(traceparent.is_none());
             }
-            RedisEvent::Reconnect { reason, stream_ids } => {
-                ServerMessage::Reconnect { reason, stream_ids }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn traced_server_message_without_traceparent_deserializes() {
+        let payload = r#"{"type":"chat_message_deleted","stream_id":"550e8400-e29b-41d4-a716-446655440000","msg_id":"msg-1"}"#;
+        let envelope: TracedServerMessage =
+            serde_json::from_str(payload).expect("old chat payload should parse");
+
+        assert!(envelope.traceparent.is_none());
+        match envelope.message {
+            ServerMessage::ChatMessageDeleted { stream_id, msg_id } => {
+                assert_eq!(
+                    stream_id,
+                    Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
+                );
+                assert_eq!(msg_id, "msg-1");
             }
+            other => panic!("unexpected message: {other:?}"),
         }
     }
 }

@@ -13,8 +13,7 @@ use storage::GcsStorage;
 use telemetry::PrometheusHandle;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
-use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::Level;
+use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
 use crate::middleware;
@@ -145,10 +144,7 @@ impl App {
                 middleware::auth::inject_user_id_extension,
             ))
             .layer(CorsLayer::permissive())
-            .layer(
-                TraceLayer::new_for_http()
-                    .make_span_with(DefaultMakeSpan::new().level(Level::INFO)),
-            )
+            .layer(TraceLayer::new_for_http().make_span_with(telemetry::http_make_span))
             .with_state(state);
 
         Ok(Self {
