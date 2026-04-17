@@ -1,6 +1,7 @@
 mod auth_test;
 mod hooks_test;
 mod streams_test;
+mod thumbnail_test;
 
 use crate::config::AppConfig;
 use axum::body::Body;

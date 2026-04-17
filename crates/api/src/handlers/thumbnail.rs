@@ -62,18 +62,8 @@ pub(crate) async fn upload_thumbnail(
     let stream_key = &existing.stream_key;
     let store = &state.storage;
 
-    let tmp_dir = tempfile::tempdir().map_err(|e| {
-        tracing::error!(error = %e, "Failed to create temp dir");
-        AppError::Internal("failed to create temp dir".to_string())
-    })?;
-    let tmp_path = tmp_dir.path().join("live-thumb.jpg");
-    tokio::fs::write(&tmp_path, &body).await.map_err(|e| {
-        tracing::error!(error = %e, "Failed to write temp file");
-        AppError::Internal("failed to write temp file".to_string())
-    })?;
-
     let key = format!("streams/{}/live-thumb.jpg", stream_key);
-    store.upload_file(&tmp_path, &key).await.map_err(|e| {
+    store.upload_bytes(&body, &key).await.map_err(|e| {
         tracing::error!(error = %e, "Failed to upload thumbnail to storage");
         AppError::Internal("failed to upload thumbnail".to_string())
     })?;
