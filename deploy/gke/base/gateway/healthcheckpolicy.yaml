@@ -1,0 +1,65 @@
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: api
+  labels:
+    app.kubernetes.io/name: api
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        port: 8080
+        requestPath: /healthz
+    checkIntervalSec: 10
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+  targetRef:
+    group: ""
+    kind: Service
+    name: api
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: bo-api
+  labels:
+    app.kubernetes.io/name: bo-api
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        port: 8800
+        requestPath: /healthz
+    checkIntervalSec: 10
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+  targetRef:
+    group: ""
+    kind: Service
+    name: bo-api
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/name: web
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        port: 8080
+        requestPath: /broadcaster/
+    checkIntervalSec: 10
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+  targetRef:
+    group: ""
+    kind: Service
+    name: web

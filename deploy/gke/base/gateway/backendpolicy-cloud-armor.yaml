@@ -1,0 +1,51 @@
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: api
+  labels:
+    app.kubernetes.io/name: api
+spec:
+  targetRef:
+    group: ""
+    kind: Service
+    name: api
+  default:
+    timeoutSec: 60
+    securityPolicy: streamhub-public-armor
+    logging:
+      enabled: true
+      sampleRate: 1.0
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: bo-api
+  labels:
+    app.kubernetes.io/name: bo-api
+spec:
+  targetRef:
+    group: ""
+    kind: Service
+    name: bo-api
+  default:
+    timeoutSec: 30
+    # Admin gets a stricter Cloud Armor policy (per SPEC-011a §Admin domain 安全).
+    securityPolicy: streamhub-admin-armor
+    logging:
+      enabled: true
+      sampleRate: 1.0
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/name: web
+spec:
+  targetRef:
+    group: ""
+    kind: Service
+    name: web
+  default:
+    timeoutSec: 30
+    securityPolicy: streamhub-public-armor

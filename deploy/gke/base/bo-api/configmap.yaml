@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bo-api-config
+  labels:
+    app.kubernetes.io/name: bo-api
+data:
+  BO_API_HOST: "0.0.0.0"
+  BO_API_PORT: "8800"
+  # BO_API_CORS_ORIGINS is overlay-specific (prod: https://admin.streamhub.com)
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://alloy.observability.svc.cluster.local:4317"
+  RATE_LIMIT_BO_GENERAL_LIMIT: "60"
+  RATE_LIMIT_BO_GENERAL_WINDOW: "60"

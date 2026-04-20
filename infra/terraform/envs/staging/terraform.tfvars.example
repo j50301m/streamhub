@@ -1,0 +1,5 @@
+project_id = "streamhub-prod"
+
+domain_staging       = "api.staging.streamhub.com"
+admin_domain_staging = "admin.staging.streamhub.com"
+web_domain_staging   = "web.staging.streamhub.com"

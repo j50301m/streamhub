@@ -1,0 +1,7 @@
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: api
+spec:
+  default:
+    securityPolicy: streamhub-public-armor-staging

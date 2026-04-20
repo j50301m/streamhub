@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+  labels:
+    app.kubernetes.io/name: api
+spec:
+  # HPA min=3, so guaranteeing 2 available tolerates one voluntary eviction at a time
+  # while still spreading across zones.
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
