@@ -1,0 +1,20 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: http-to-https
+  labels:
+    app.kubernetes.io/part-of: streamhub
+spec:
+  parentRefs:
+    - name: streamhub
+      sectionName: http
+  hostnames:
+    - api.streamhub.com
+    - admin.streamhub.com
+    - web.streamhub.com
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

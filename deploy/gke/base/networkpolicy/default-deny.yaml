@@ -1,0 +1,13 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  labels:
+    app.kubernetes.io/part-of: streamhub
+spec:
+  # Default-deny all ingress and egress inside the namespace; every workload must opt in
+  # to the traffic it needs via an explicit NetworkPolicy below.
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

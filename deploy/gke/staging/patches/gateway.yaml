@@ -1,0 +1,15 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: streamhub
+  annotations:
+    networking.gke.io/addresses: streamhub-staging-public
+    networking.gke.io/certmap: streamhub-staging-cert-map
+spec:
+  listeners:
+    - name: https-api
+      hostname: api.staging.streamhub.com
+    - name: https-admin
+      hostname: admin.staging.streamhub.com
+    - name: https-web
+      hostname: web.staging.streamhub.com

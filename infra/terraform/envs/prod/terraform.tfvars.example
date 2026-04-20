@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and fill in before `terraform apply`.
+# Do NOT commit terraform.tfvars — passwords go through Secret Manager in real rollouts.
+
+project_id = "streamhub-prod"
+
+master_authorized_networks = [
+  # { cidr_block = "203.0.113.0/24", display_name = "office" },
+  # { cidr_block = "35.235.240.0/20", display_name = "iap-tunnel" },
+]
+
+cloudsql_user_password = "replace-me-from-secret-manager"

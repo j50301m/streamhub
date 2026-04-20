@@ -5,6 +5,14 @@
 # Dependencies
 Cargo.lock
 
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+**/*.tfstate
+**/*.tfstate.backup
+**/terraform.tfvars
+**/*.auto.tfvars
+
 # Environment
 .env
 .env.*
@@ -29,4 +37,12 @@ deploy/services/ssl/
 # Claude setting
 .claude/*
 CLAUDE.md
-docs/
+# docs/ is a nested private git repo (streamhub-docs). Everything new under it
+# is ignored except for the files explicitly un-ignored below.
+# (Files that were tracked before this rule was introduced stay tracked — git
+# only applies .gitignore to untracked paths.)
+docs/*
+!docs/spec
+docs/spec/*
+# Exception: SPEC-011a ships alongside its implementation in this branch.
+!docs/spec/SPEC-011a-gke-bootstrap-app-workloads.md

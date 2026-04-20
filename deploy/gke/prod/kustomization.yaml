@@ -1,0 +1,62 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: streamhub-prod
+
+# Namespace CRs live in ../base/namespaces and are applied separately by
+# deploy/gke/scripts/deploy.sh before the overlay is applied. Pulling them in
+# here would cause the overlay's `namespace:` transform to rename every
+# Namespace to streamhub-prod and produce an ID conflict.
+resources:
+  - ../base
+
+# Image tags are replaced at deploy time by `deploy/gke/scripts/deploy.sh`
+# via `kustomize edit set image` so the commit stays tag-agnostic.
+images:
+  - name: api
+    newName: asia-east1-docker.pkg.dev/PROJECT_ID/streamhub/api
+    newTag: PLACEHOLDER
+  - name: bo-api
+    newName: asia-east1-docker.pkg.dev/PROJECT_ID/streamhub/bo-api
+    newTag: PLACEHOLDER
+  - name: web
+    newName: asia-east1-docker.pkg.dev/PROJECT_ID/streamhub/web
+    newTag: PLACEHOLDER
+
+patches:
+  - path: patches/api-sa.yaml
+    target:
+      kind: ServiceAccount
+      name: api
+  - path: patches/bo-api-sa.yaml
+    target:
+      kind: ServiceAccount
+      name: bo-api
+  - path: patches/api-config.yaml
+    target:
+      kind: ConfigMap
+      name: api-config
+  - path: patches/bo-api-config.yaml
+    target:
+      kind: ConfigMap
+      name: bo-api-config
+  - path: patches/clustersecretstore.yaml
+    target:
+      kind: ClusterSecretStore
+      name: gcp-secret-manager
+  - path: patches/externalsecret-api.yaml
+    target:
+      kind: ExternalSecret
+      name: api-env
+  - path: patches/externalsecret-bo-api.yaml
+    target:
+      kind: ExternalSecret
+      name: bo-api-env
+
+replicas:
+  - name: api
+    count: 3
+  - name: bo-api
+    count: 2
+  - name: web
+    count: 2

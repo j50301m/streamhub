@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+data:
+  TRANSCODER_ENABLED: "true"
+  TRANSCODER_PROJECT_ID: "PROJECT_ID"
+  TRANSCODER_LOCATION: "asia-east1"
+  # GCS bucket names come from Terraform output.
+  GCS_BUCKET: "streamhub-recordings-prod"
+  # Populated by SPEC-011b (per-pod MediaMTX). Placeholder until mediamtx statefulset lands.
+  MEDIAMTX_INSTANCES: >-
+    [{"name":"mtx-0","internal_api":"http://mediamtx-0.mediamtx:9997","public_whip":"https://mtx-0.media.streamhub.com","public_whep":"https://mtx-0.media.streamhub.com","public_hls":"https://mtx-0.media.streamhub.com"},{"name":"mtx-1","internal_api":"http://mediamtx-1.mediamtx:9997","public_whip":"https://mtx-1.media.streamhub.com","public_whep":"https://mtx-1.media.streamhub.com","public_hls":"https://mtx-1.media.streamhub.com"},{"name":"mtx-2","internal_api":"http://mediamtx-2.mediamtx:9997","public_whip":"https://mtx-2.media.streamhub.com","public_whep":"https://mtx-2.media.streamhub.com","public_hls":"https://mtx-2.media.streamhub.com"}]

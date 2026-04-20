@@ -1,0 +1,91 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api
+  labels:
+    app.kubernetes.io/name: api
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Public traffic from the GKE Gateway / LB health checkers.
+    - from:
+        - ipBlock:
+            # GFE + GCLB health check ranges (documented by Google).
+            cidr: 35.191.0.0/16
+        - ipBlock:
+            cidr: 130.211.0.0/22
+        - ipBlock:
+            cidr: 34.96.0.0/20
+      ports:
+        - protocol: TCP
+          port: 8080
+    # MediaMTX pods reach /internal/hooks and /internal/mtx/drain over the cluster network.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mediamtx
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Prometheus / Alloy scraping metrics from the observability namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # GCP managed services (Cloud SQL, Memorystore, GCS, Transcoder, Secret Manager, Pub/Sub, OAuth metadata).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+    # Cloud SQL private IP (Postgres).
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Memorystore Redis (private IP).
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 6378
+    # Alloy OTLP collector in observability namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+    # MediaMTX internal API (path list / path creation hooks).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mediamtx
+      ports:
+        - protocol: TCP
+          port: 9997

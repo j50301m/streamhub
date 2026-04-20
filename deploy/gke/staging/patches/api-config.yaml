@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+data:
+  TRANSCODER_ENABLED: "true"
+  TRANSCODER_PROJECT_ID: "PROJECT_ID"
+  TRANSCODER_LOCATION: "asia-east1"
+  GCS_BUCKET: "streamhub-recordings-staging"
+  MEDIAMTX_INSTANCES: >-
+    [{"name":"mtx-0","internal_api":"http://mediamtx-0.mediamtx:9997","public_whip":"https://mtx-0.media.streamhub.com","public_whep":"https://mtx-0.media.streamhub.com","public_hls":"https://mtx-0.media.streamhub.com"}]

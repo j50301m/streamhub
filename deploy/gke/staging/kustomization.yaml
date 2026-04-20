@@ -1,0 +1,102 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: streamhub-staging
+
+# Namespaces are applied separately by deploy.sh (see prod overlay for why).
+resources:
+  - ../base
+
+images:
+  - name: api
+    newName: asia-east1-docker.pkg.dev/PROJECT_ID/streamhub/api
+    newTag: PLACEHOLDER
+  - name: bo-api
+    newName: asia-east1-docker.pkg.dev/PROJECT_ID/streamhub/bo-api
+    newTag: PLACEHOLDER
+  - name: web
+    newName: asia-east1-docker.pkg.dev/PROJECT_ID/streamhub/web
+    newTag: PLACEHOLDER
+
+patches:
+  - path: patches/api-sa.yaml
+    target:
+      kind: ServiceAccount
+      name: api
+  - path: patches/bo-api-sa.yaml
+    target:
+      kind: ServiceAccount
+      name: bo-api
+  - path: patches/api-config.yaml
+    target:
+      kind: ConfigMap
+      name: api-config
+  - path: patches/bo-api-config.yaml
+    target:
+      kind: ConfigMap
+      name: bo-api-config
+  - path: patches/clustersecretstore.yaml
+    target:
+      kind: ClusterSecretStore
+      name: gcp-secret-manager
+  - path: patches/externalsecret-api.yaml
+    target:
+      kind: ExternalSecret
+      name: api-env
+  - path: patches/externalsecret-bo-api.yaml
+    target:
+      kind: ExternalSecret
+      name: bo-api-env
+  - path: patches/hpa-api.yaml
+    target:
+      kind: HorizontalPodAutoscaler
+      name: api
+  - path: patches/hpa-bo-api.yaml
+    target:
+      kind: HorizontalPodAutoscaler
+      name: bo-api
+  - path: patches/hpa-web.yaml
+    target:
+      kind: HorizontalPodAutoscaler
+      name: web
+  - path: patches/backendpolicy-api-armor.yaml
+    target:
+      kind: GCPBackendPolicy
+      name: api
+  - path: patches/backendpolicy-bo-api-armor.yaml
+    target:
+      kind: GCPBackendPolicy
+      name: bo-api
+  - path: patches/backendpolicy-web-armor.yaml
+    target:
+      kind: GCPBackendPolicy
+      name: web
+  - path: patches/gateway.yaml
+    target:
+      kind: Gateway
+      name: streamhub
+  - path: patches/httproute-api.yaml
+    target:
+      kind: HTTPRoute
+      name: api
+  - path: patches/httproute-bo-api.yaml
+    target:
+      kind: HTTPRoute
+      name: bo-api
+  - path: patches/httproute-web.yaml
+    target:
+      kind: HTTPRoute
+      name: web
+  - path: patches/httproute-http-redirect.yaml
+    target:
+      kind: HTTPRoute
+      name: http-to-https
+
+replicas:
+  # Staging runs smaller than prod to save money; HPA still enforces zone spread.
+  - name: api
+    count: 2
+  - name: bo-api
+    count: 1
+  - name: web
+    count: 1

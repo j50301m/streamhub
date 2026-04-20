@@ -1,0 +1,53 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: streamhub
+  labels:
+    app.kubernetes.io/part-of: streamhub
+  annotations:
+    # Static external IP reserved by Terraform; attach it here so DNS stays stable.
+    networking.gke.io/addresses: streamhub-public
+    # Certificate Manager certificate map holding the three google-managed certs
+    # (api / admin / web). The map is provisioned by Terraform (`modules/certs`).
+    # Using a cert map — not the deprecated `ManagedCertificate` CRD — is the
+    # supported path for Gateway API on GKE.
+    networking.gke.io/certmap: streamhub-cert-map
+spec:
+  gatewayClassName: gke-l7-global-external-managed
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https-api
+      protocol: HTTPS
+      port: 443
+      hostname: "api.streamhub.com"
+      # tls.mode is required; certificateRefs is intentionally omitted because
+      # the cert map annotation on metadata supplies the certificate for all
+      # HTTPS listeners on this Gateway.
+      tls:
+        mode: Terminate
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https-admin
+      protocol: HTTPS
+      port: 443
+      hostname: "admin.streamhub.com"
+      tls:
+        mode: Terminate
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https-web
+      protocol: HTTPS
+      port: 443
+      hostname: "web.streamhub.com"
+      tls:
+        mode: Terminate
+      allowedRoutes:
+        namespaces:
+          from: Same
