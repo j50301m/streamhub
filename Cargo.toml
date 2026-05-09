@@ -62,7 +62,7 @@ uuid = { version = "1", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-opentelemetry = "0.31"
+opentelemetry = "0.32"
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.31", features = ["tonic", "grpc-tonic"] }
 tracing-opentelemetry = "0.32"
