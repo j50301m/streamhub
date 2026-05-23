@@ -65,7 +65,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 opentelemetry = "0.31"
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.31", features = ["tonic", "grpc-tonic"] }
-tracing-opentelemetry = "0.32"
+tracing-opentelemetry = "0.33"
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
 cfgloader_rs = "1.0"
